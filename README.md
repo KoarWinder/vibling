@@ -2,7 +2,7 @@
 
 A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs onto windows, plays ball, sits down at a laptop while you type and naps when bored.
 
-[Русская версия ниже](#вайблинг)
+[Русская версия ниже](#vibling-по-русски)
 
 ![Vibling](docs/settings-en.png)
 
@@ -12,8 +12,10 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 - Can be grabbed and thrown: bounces off screen edges, lands in different ways, sometimes opens an umbrella.
 - Taps a laptop while you type. Key presses are only counted, never recorded.
 - Chases a ball you can throw around.
-- 9 skins, 8 accessories, 4 sizes, 3 personalities.
-- English and Russian.
+- 9 skins plus your own colors for body, eyes and outline.
+- 17 accessories, wear as many as you like at once.
+- Hides in fullscreen apps (games, videos, F11) or keeps walking at the bottom of the screen.
+- 4 sizes, 3 personalities, English and Russian.
 
 ## Controls
 
@@ -28,6 +30,8 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 
 Download `Vibling.exe` from [Releases](../../releases) and run it. Requires Windows 10/11 and [.NET Desktop Runtime 7+](https://dotnet.microsoft.com/download/dotnet).
 
+On every start Vibling asks GitHub whether a newer release is out and offers to update. This is the only network request it makes.
+
 Build from source:
 
 ```
@@ -40,11 +44,11 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 ---
 
-# Вайблинг
+# Vibling по-русски
 
 Маленький пиксельный питомец для рабочего стола Windows. Гуляет по панели задач, забирается на окна, играет в мячик, садится за ноутбук, пока вы печатаете, и засыпает от скуки.
 
-![Вайблинг](docs/settings-ru.png)
+![Vibling](docs/settings-ru.png)
 
 ## Возможности
 
@@ -52,8 +56,10 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 - Его можно схватить и бросить: отскакивает от краёв экрана, приземляется по-разному, иногда раскрывает зонтик.
 - Стучит по ноутбуку, пока вы печатаете. Нажатия только считаются, сами клавиши не сохраняются.
 - Бегает за мячиком.
-- 9 скинов, 8 аксессуаров, 4 размера, 3 характера.
-- Русский и английский язык.
+- 9 скинов и свой цвет: тело, глаза и обводка.
+- 17 аксессуаров, можно надевать сколько угодно сразу.
+- Прячется в полноэкранных приложениях (игры, видео, F11) или ходит по низу экрана.
+- 4 размера, 3 характера, русский и английский язык.
 
 ## Управление
 
@@ -67,6 +73,8 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 ## Установка
 
 Скачайте `Vibling.exe` из [Releases](../../releases) и запустите. Нужны Windows 10/11 и [.NET Desktop Runtime 7+](https://dotnet.microsoft.com/download/dotnet).
+
+При каждом запуске Vibling спрашивает у GitHub, не вышла ли новая версия, и предлагает обновиться. Больше программа никуда не обращается.
 
 ## Лицензия
 

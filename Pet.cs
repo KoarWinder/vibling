@@ -29,14 +29,14 @@ class PetForm : LayeredForm
     readonly Random rnd = new();
     readonly Stopwatch sw = Stopwatch.StartNew();
     readonly System.Windows.Forms.Timer timer = new();
+    readonly System.Windows.Forms.Timer updates = new();
     readonly List<Particle> parts = new();
     readonly Pose pose = new();
-    readonly ContextMenuStrip menu = new();
     readonly NotifyIcon tray = new();
     readonly HashSet<int> keysDown = new();
     readonly Native.HookProc hookProc;
     IntPtr hook;
-    SettingsForm settingsForm;
+    SettingsWindow settingsWindow;
     BallForm ball;
 
     static readonly string[] CodeGlyphs = { "{ }", "</>", "=>", ";", "fn()", "++", "git", "0x1F", "[ ]", "//" };
@@ -60,7 +60,6 @@ class PetForm : LayeredForm
     readonly Queue<(float t, Point p)> trail = new();
     float dragVX;
 
-    ToolStripMenuItem miPet, miFeed, miBall, miFlip, miSleep, miSettings, miHide, miQuit;
 
     public PetForm(Settings settings)
     {
@@ -74,12 +73,14 @@ class PetForm : LayeredForm
         y = wa.Top + 60 * U;
         umbrellaWanted = true;
 
-        BuildMenu();
         tray.Icon = AppIcon.Get();
         tray.Text = L.T("app");
-        tray.ContextMenuStrip = menu;
         tray.Visible = true;
-        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
+        tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) ShowSettings();
+            else if (e.Button == MouseButtons.Right) ShowMenu(Cursor.Position);
+        };
 
         hookProc = HookCb;
         using (var cur = Process.GetCurrentProcess())
@@ -88,6 +89,15 @@ class PetForm : LayeredForm
         timer.Interval = 30;
         timer.Tick += (_, _) => Tick();
         timer.Start();
+
+        // проверка обновлений: один раз при каждом запуске, через пару секунд
+        updates.Interval = 3000;
+        updates.Tick += async (_, _) =>
+        {
+            updates.Stop();
+            await Updater.Check(this, false);
+        };
+        updates.Start();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -108,84 +118,102 @@ class PetForm : LayeredForm
 
     // ---------- меню ----------
 
-    void BuildMenu()
+    /// Меню по правому клику на питомце и на иконке в трее.
+    void ShowMenu(Point at)
     {
-        ToolStripMenuItem Item(string text, Action act)
+        var skin = Looks.SkinById(S.Skin);
+        var icon = new Bitmap(19, 19);
+        using (var g = Graphics.FromImage(icon))
         {
-            var it = new ToolStripMenuItem(text);
-            it.Click += (_, _) => act();
-            return it;
+            var p = new Pose();
+            p.Reset(0);
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            Sprite.Draw(g, p, skin, "none", 9.5f, 16.5f, 1);
         }
-
-        miPet = Item("", PetMe);
-        miFeed = Item("", Feed);
-        miBall = Item("", ToggleBall);
-        miFlip = Item("", Flip);
-        miSettings = Item("", ShowSettings);
-        miQuit = Item("", Quit);
-        miSleep = Item("", () =>
+        PopupMenu.Entry Item(string key, Action act, bool check = false) => new() { Text = L.T(key), Act = act, Check = check };
+        var sep = new PopupMenu.Entry { Separator = true };
+        PopupMenu.Open(new List<PopupMenu.Entry>
         {
-            if (st == St.Sleep) WakeUp();
-            else if (Grounded && !Busy) Set(St.Yawn, 1.3f);
-        });
-        miHide = Item("", () => SetHidden(!hidden));
-
-        menu.Items.AddRange(new ToolStripItem[]
-        {
-            miPet, miFeed, miBall, miFlip, miSleep,
-            new ToolStripSeparator(),
-            miSettings, miHide, miQuit,
-        });
-        menu.Opening += (_, _) =>
-        {
-            miPet.Text = L.T("pet");
-            miFeed.Text = L.T("feed");
-            miBall.Text = L.T("ball");
-            miBall.Checked = ball != null;
-            miFlip.Text = L.T("flip.menu");
-            miSleep.Text = L.T(st == St.Sleep ? "wake" : "sleep");
-            miSettings.Text = L.T("settings");
-            miHide.Text = L.T(hidden ? "show" : "hide");
-            miQuit.Text = L.T("quit");
-        };
+            new() { Text = L.T("app"), Header = true, Icon = icon },
+            sep,
+            Item("pet", PetMe),
+            Item("feed", Feed),
+            Item("ball", ToggleBall, ball != null),
+            Item("flip.menu", Flip),
+            Item(st == St.Sleep ? "wake" : "sleep", () =>
+            {
+                if (st == St.Sleep) WakeUp();
+                else if (Grounded && !Busy) Set(St.Yawn, 1.3f);
+            }),
+            sep,
+            Item("settings", ShowSettings),
+            Item(hidden ? "show" : "hide", () => SetHidden(!hidden)),
+            sep,
+            Item("quit", Quit),
+        }, at, U);
     }
 
     public void ShowSettings()
     {
-        if (settingsForm == null || settingsForm.IsDisposed)
+        if (settingsWindow == null)
         {
-            settingsForm = new SettingsForm(this);
-            settingsForm.FormClosed += (_, _) => settingsForm = null;
-            settingsForm.Show();
+            settingsWindow = new SettingsWindow(this);
+            settingsWindow.Closed += (_, _) => settingsWindow = null;
+            System.Windows.Forms.Integration.ElementHost.EnableModelessKeyboardInterop(settingsWindow);
+            settingsWindow.Show();
         }
-        if (settingsForm.WindowState == FormWindowState.Minimized) settingsForm.WindowState = FormWindowState.Normal;
+        if (settingsWindow.WindowState == System.Windows.WindowState.Minimized) settingsWindow.WindowState = System.Windows.WindowState.Normal;
         // окно приложения в фоне не может просто так выйти вперёд, поэтому ненадолго делаем его «поверх всех»
-        settingsForm.TopMost = true;
-        settingsForm.TopMost = false;
-        settingsForm.Activate();
+        settingsWindow.Topmost = true;
+        settingsWindow.Topmost = false;
+        settingsWindow.Activate();
         if (!S.FirstRunDone) { S.FirstRunDone = true; S.Save(); }
     }
 
     /// Пересоздаёт окно настроек на том же месте (после смены языка).
     public void ReloadSettings()
     {
-        var loc = settingsForm?.Location;
-        settingsForm?.Close();
-        settingsForm = null;
+        var old = settingsWindow;
+        double? left = old?.Left, top = old?.Top;
+        old?.Close();
+        settingsWindow = null;
         tray.Text = L.T("app");
         Text = L.T("app");
         ShowSettings();
-        if (loc.HasValue) settingsForm.Location = loc.Value;
+        if (left.HasValue)
+        {
+            settingsWindow.WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            settingsWindow.Left = left.Value;
+            settingsWindow.Top = top.Value;
+        }
+    }
+
+    /// Нашлось обновление: показываем плашку в настройках. Само окно открываем, только если не мешаем игре или видео.
+    public void OnUpdateFound(bool manual)
+    {
+        if (settingsWindow != null) settingsWindow.RefreshBanner();
+        else if (manual || (!fsHidden && Desk.Fullscreen == null)) ShowSettings();
     }
 
     public bool IsHidden => hidden;
     public bool HasBall => ball != null;
 
+    bool fsHidden;
+    float fsT;
+
     public void SetHidden(bool h)
     {
         hidden = h;
-        if (h) { Hide(); ball?.Hide(); }
-        else { Show(); ball?.Show(); }
+        ApplyVisibility();
+    }
+
+    /// Питомец виден, если его не спрятали и поверх не открыто полноэкранное окно.
+    void ApplyVisibility()
+    {
+        bool show = !hidden && !fsHidden;
+        if (show == Visible) return;
+        if (show) { Show(); ball?.Show(); }
+        else { Hide(); ball?.Hide(); }
     }
 
     public void Quit()
@@ -196,7 +224,7 @@ class PetForm : LayeredForm
         tray.Visible = false;
         tray.Dispose();
         ball?.Close();
-        settingsForm?.Close();
+        settingsWindow?.Close();
         Application.Exit();
     }
 
@@ -257,7 +285,7 @@ class PetForm : LayeredForm
         else if (e.Button == MouseButtons.Right)
         {
             Native.SetForegroundWindow(Handle);
-            menu.Show(Cursor.Position);
+            ShowMenu(Cursor.Position);
         }
     }
 
@@ -307,7 +335,7 @@ class PetForm : LayeredForm
 
     void Set(St s, float dur = 0) { st = s; stT = 0; stDur = dur; }
     float Rand(float a, float b) => a + (float)rnd.NextDouble() * (b - a);
-    Rectangle WA => Screen.FromPoint(new Point((int)x, (int)y - 10)).WorkingArea;
+    Rectangle WA => Desk.AreaAt(new Point((int)x, (int)y - 10));
 
     (float L, float R) Span()
     {
@@ -479,6 +507,16 @@ class PetForm : LayeredForm
         lastT = now;
         time += dt;
         if (bmp.Width != (int)Math.Ceiling(36 * S.Pixel * U)) ApplySize();
+
+        fsT -= dt;
+        if (fsT <= 0)
+        {
+            fsT = 0.5f;
+            Desk.CheckFullscreen();
+            bool fs = S.HideInFullscreen && Desk.Fullscreen == Screen.FromPoint(new Point((int)x, (int)y - 10)).Bounds;
+            if (fs != fsHidden) { fsHidden = fs; ApplyVisibility(); }
+        }
+        if (fsHidden) return;
 
         Step(dt);
         ball?.Step(dt);
@@ -940,7 +978,7 @@ class PetForm : LayeredForm
         }
 
         BuildPose();
-        Sprite.Draw(g, pose, skin, S.Accessory, FX, FY + hop, P, face, sqX, sqY, angle);
+        Sprite.Draw(g, pose, skin, S.Wear, FX, FY + hop, P, face, sqX, sqY, angle);
 
         if (st == St.Dizzy || st == St.Splat)
         {
@@ -1077,7 +1115,7 @@ class BallForm : LayeredForm
     {
         if (IsDisposed) return;
         float rad = Rad;
-        var wa = Screen.FromPoint(new Point((int)X, (int)Y)).WorkingArea;
+        var wa = Desk.AreaAt(new Point((int)X, (int)Y));
         if (Held)
         {
             var c = Cursor.Position;

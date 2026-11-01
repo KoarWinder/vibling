@@ -3,8 +3,9 @@ namespace Vibling;
 record Skin(string Id, Color Body, Color Shade, Color Spark, Color Eye, Color Outline)
 {
     /// Цвет акцента для окна настроек: тёмному скину нужен светлый акцент.
-    public Color Accent => Id == "night" ? Spark : Body;
+    public Color Accent => Id == "night" ? Spark : Id == "custom" && IsDark ? Eye : Body;
     public string Name => L.T("skin." + Id);
+    public bool IsDark => Body.R * 0.299 + Body.G * 0.587 + Body.B * 0.114 < 110;
 }
 
 record Accessory(string Id)
@@ -31,11 +32,32 @@ static class Looks
 
     public static readonly Accessory[] Accessories =
     {
-        new("none"), new("headphones"), new("cap"), new("beanie"),
-        new("crown"), new("shades"), new("bow"), new("halo"),
+        new("none"), new("headphones"), new("cap"), new("beanie"), new("crown"), new("tophat"),
+        new("santa"), new("partyhat"), new("propeller"), new("catears"), new("horns"), new("bow"),
+        new("flower"), new("halo"), new("shades"), new("bowtie"), new("scarf"), new("bell"),
     };
 
-    public static Skin SkinById(string id) => Skins.FirstOrDefault(s => s.Id == id) ?? Skins[0];
+    /// Свой скин: цвета тела, глаз и обводки задаёт пользователь, тень тела считается сама.
+    public static Skin Custom { get; private set; } = MakeCustom(C(217, 119, 87), C(24, 18, 22), C(42, 24, 18));
+
+    public static void SetCustom(Color body, Color eye, Color outline) => Custom = MakeCustom(body, eye, outline);
+
+    static Skin MakeCustom(Color body, Color eye, Color outline) =>
+        new("custom", body, Mix(body, Color.Black, 0.2f), Mix(body, Color.White, 0.5f), eye, outline);
+
+    static Color Mix(Color a, Color b, float t) =>
+        C((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
+
+    public static Skin SkinById(string id) => id == "custom" ? Custom : Skins.FirstOrDefault(s => s.Id == id) ?? Skins[0];
+
+    /// Порядок, в котором надетое рисуется поверх друг друга: сначала шея и лицо, потом голова.
+    static readonly string[] DrawOrder =
+    {
+        "bowtie", "scarf", "bell", "shades", "headphones", "catears", "horns", "beanie", "cap", "tophat",
+        "santa", "partyhat", "propeller", "crown", "halo", "flower", "bow",
+    };
+
+    public static IEnumerable<string> Ordered(IEnumerable<string> wear) => DrawOrder.Where(wear.Contains);
 }
 
 enum Legs { Stand, Walk, Run, Dangle, Tuck, Brace, Hidden }
@@ -82,6 +104,10 @@ static class Sprite
     static readonly Color PinkDark = Color.FromArgb(214, 70, 130);
     static readonly Color White = Color.FromArgb(250, 250, 255);
     static readonly Color Black = Color.FromArgb(16, 14, 20);
+    static readonly Color Green = Color.FromArgb(96, 196, 110);
+    static readonly Color Blue = Color.FromArgb(70, 130, 230);
+    static readonly Color Silver = Color.FromArgb(196, 200, 214);
+    static readonly Color SilverLight = Color.FromArgb(232, 234, 242);
     static readonly Color UmbA = Color.FromArgb(232, 72, 85);
     static readonly Color UmbB = Color.FromArgb(255, 245, 235);
 
@@ -97,7 +123,7 @@ static class Sprite
             for (int r = r0; r <= r1; r++) Cell(c, r, col);
     }
 
-    static void Build(Pose p, Skin s, string acc)
+    static void Build(Pose p, Skin s, IEnumerable<string> wear)
     {
         Array.Clear(grid);
         int by = p.Sit ? 1 : 0;
@@ -136,14 +162,12 @@ static class Sprite
                 break;
             }
             case Arms.Up:
-                Rect(1, 3 + by, 2, 4 + by, s.Body); Rect(15, 3 + by, 16, 4 + by, s.Body);
+                // руки вверх буквой V: от плеча наискосок вверх
+                ArmUp(s.Body, by, 0);
                 break;
             case Arms.Flail:
-            {
-                int f = ph2(5);
-                Rect(1, 3 + f + by, 2, 4 + f + by, s.Body); Rect(15, 3 + f + by, 16, 4 + f + by, s.Body);
+                ArmUp(s.Body, by, ph2(5));
                 break;
-            }
             case Arms.Wave:
             {
                 Rect(1, 6 + by, 2, 7 + by, s.Body);
@@ -215,7 +239,8 @@ static class Sprite
         }
         if (p.Blush) { Cell(4, 7 + by, BlushC); Cell(13, 7 + by, BlushC); }
 
-        // аксессуар
+        // аксессуары: можно надеть сколько угодно
+        foreach (var acc in Looks.Ordered(wear))
         switch (acc)
         {
             case "headphones":
@@ -245,7 +270,64 @@ static class Sprite
                 Cell(5, 5 + by, MetalLight); Cell(11, 5 + by, MetalLight);
                 break;
             case "bow":
-                Rect(3, 1 + by, 4, 2 + by, Pink); Rect(6, 1 + by, 7, 2 + by, Pink); Cell(5, 2 + by, PinkDark);
+                // бантик по центру макушки: крылья шире к краям, узелок посередине
+                Bow(0 + by, Pink, PinkDark);
+                break;
+            case "bowtie":
+                // та же форма, только красная и под мордочкой
+                Bow(8 + by, Red, RedDark, 3);
+                break;
+            case "tophat":
+                Rect(5, -2 + by, 12, 1 + by, Black);
+                Rect(5, 0 + by, 12, 0 + by, Red);
+                Rect(3, 2 + by, 14, 2 + by, Black);
+                break;
+            case "santa":
+                Rect(5, 0 + by, 12, 1 + by, Red);
+                Rect(9, -1 + by, 14, -1 + by, Red);
+                Rect(15, -1 + by, 15, 0 + by, White);
+                Rect(3, 2 + by, 14, 2 + by, White);
+                break;
+            case "partyhat":
+                Rect(8, -3 + by, 9, -3 + by, White);
+                Rect(8, -2 + by, 9, -2 + by, Pink);
+                Rect(7, -1 + by, 10, -1 + by, Gold);
+                Rect(7, 0 + by, 10, 0 + by, Pink);
+                Rect(6, 1 + by, 11, 1 + by, Gold);
+                Rect(6, 2 + by, 11, 2 + by, Pink);
+                break;
+            case "propeller":
+                Rect(4, 2 + by, 8, 2 + by, Red); Rect(9, 2 + by, 13, 2 + by, Blue);
+                Rect(6, 1 + by, 8, 1 + by, Red); Rect(9, 1 + by, 11, 1 + by, Blue);
+                Rect(8, 0 + by, 9, 0 + by, Dark);
+                if ((int)(p.Phase * 10) % 2 == 0) Rect(5, -1 + by, 12, -1 + by, Gold);
+                else Rect(7, -1 + by, 10, -1 + by, Gold);
+                break;
+            case "catears":
+                Cell(4, 1 + by, s.Body); Rect(3, 2 + by, 5, 2 + by, s.Body); Cell(4, 2 + by, BlushC);
+                Cell(13, 1 + by, s.Body); Rect(12, 2 + by, 14, 2 + by, s.Body); Cell(13, 2 + by, BlushC);
+                break;
+            case "horns":
+                Cell(3, 0 + by, Red); Rect(4, 1 + by, 4, 2 + by, Red); Cell(5, 2 + by, Red);
+                Cell(14, 0 + by, Red); Rect(13, 1 + by, 13, 2 + by, Red); Cell(12, 2 + by, Red);
+                break;
+            case "flower":
+                // ровно по центру макушки
+                Rect(8, 1 + by, 9, 2 + by, Green);
+                Cell(10, 2 + by, Green);
+                Rect(8, -3 + by, 9, -2 + by, Pink);
+                Rect(6, -1 + by, 7, 0 + by, Pink);
+                Rect(10, -1 + by, 11, 0 + by, Pink);
+                Rect(8, -1 + by, 9, 0 + by, Gold);
+                break;
+            case "scarf":
+                Rect(3, 9 + by, 14, 9 + by, Red);
+                for (int c = 4; c <= 14; c += 3) Cell(c, 9 + by, White);
+                Rect(12, 10 + by, 12, 11 + by, Red);
+                break;
+            case "bell":
+                Rect(3, 9 + by, 14, 9 + by, Red);
+                Rect(8, 9 + by, 9, 10 + by, Gold);
                 break;
             case "halo":
                 Rect(5, -2 + by, 12, -2 + by, Gold);
@@ -255,9 +337,11 @@ static class Sprite
         // ноутбук
         if (p.Laptop)
         {
-            Rect(5, 8, 12, 10, Metal);
-            Rect(8, 9, 9, 9, p.LaptopLit ? Neon : MetalLight);
-            Rect(2, 11, 15, 11, MetalLight);
+            // у тёмных скинов ноутбук светлый, чтобы не сливался с телом
+            Color lid = s.IsDark ? Silver : Metal, deck = s.IsDark ? SilverLight : MetalLight;
+            Rect(5, 8, 12, 10, lid);
+            Rect(8, 9, 9, 9, p.LaptopLit ? Neon : deck);
+            Rect(2, 11, 15, 11, deck);
         }
 
         // зонтик
@@ -273,6 +357,25 @@ static class Sprite
         }
     }
 
+    /// Рука, поднятая наискосок; lower = 1 опускает кисть на клетку (машет, когда падает).
+    static void ArmUp(Color c, int by, int lower)
+    {
+        // два блока 2×2, как обычные руки: плечо у тела и кисть выше и дальше
+        Rect(1, 4 + by, 2, 5 + by, c); Rect(0, 2 + by + lower, 1, 3 + by + lower, c);
+        Rect(15, 4 + by, 16, 5 + by, c); Rect(16, 2 + by + lower, 17, 3 + by + lower, c);
+    }
+
+    /// Бантик-бабочка: строки top..top+h, крылья шире к краям (как у настоящего банта), узелок посередине.
+    static void Bow(int top, Color wing, Color knot, int h = 4)
+    {
+        int mid = top + (h - 1) / 2;
+        Rect(5, top, 6, top + h - 1, wing);
+        Rect(11, top, 12, top + h - 1, wing);
+        Rect(7, mid, 7, top + h / 2, wing);
+        Rect(10, mid, 10, top + h / 2, wing);
+        Rect(8, mid, 9, top + h / 2, knot);
+    }
+
     static SolidBrush Brush(Color c)
     {
         if (!brushes.TryGetValue(c, out var b)) brushes[c] = b = new SolidBrush(c);
@@ -281,9 +384,13 @@ static class Sprite
 
     /// Рисует персонажа: (cx, feetY) — точка между ступнями, P — размер «пикселя».
     public static void Draw(Graphics g, Pose p, Skin s, string acc, float cx, float feetY, float P,
+                            int face = 1, float sqX = 1, float sqY = 1, float angle = 0) =>
+        Draw(g, p, s, new[] { acc }, cx, feetY, P, face, sqX, sqY, angle);
+
+    public static void Draw(Graphics g, Pose p, Skin s, IEnumerable<string> wear, float cx, float feetY, float P,
                             int face = 1, float sqX = 1, float sqY = 1, float angle = 0)
     {
-        Build(p, s, acc);
+        Build(p, s, wear);
         var state = g.Save();
         g.TranslateTransform(cx, feetY);
         if (Math.Abs(angle) > 0.01f)

@@ -15,7 +15,11 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        var mutex = new Mutex(true, MutexName, out bool first);
+        // после обновления новая версия ждёт, пока закроется старая
+        var mutex = new Mutex(false, MutexName);
+        bool first;
+        try { first = mutex.WaitOne(args.Contains("--updated") ? 15000 : 0); }
+        catch (AbandonedMutexException) { first = true; }
         if (!first)
         {
             // Питомец уже на экране: повторный запуск открывает его настройки.
@@ -28,6 +32,8 @@ static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        Updater.Cleanup();
+        Fluent.Init();
         var settings = Settings.Load();
         L.Set(settings.Language);
         Autostart.Refresh();
@@ -85,6 +91,7 @@ static class Native
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 }
 
 /// Окна на рабочем столе, по верхней кромке которых можно ходить.
@@ -125,6 +132,29 @@ static class Desk
         bool platform = !full && !Native.IsZoomed(h) && Native.GetWindowTextLength(h) > 0 && r.Width >= 150 && r.Height >= 80;
         Wins.Add(new Win { H = h, R = r, Platform = platform });
         return true;
+    }
+
+    /// Монитор, на котором сейчас полноэкранное окно (игра, видео, F11), иначе null.
+    public static Rectangle? Fullscreen;
+
+    public static void CheckFullscreen()
+    {
+        Fullscreen = null;
+        var fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero || Own.Contains(fg)) return;
+        cls.Clear();
+        Native.GetClassName(fg, cls, 64);
+        if (cls.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return;
+        if (!Native.GetWindowRect(fg, out var rc)) return;
+        var mon = Screen.FromHandle(fg).Bounds;
+        if (rc.L <= mon.Left && rc.T <= mon.Top && rc.R >= mon.Right && rc.B >= mon.Bottom) Fullscreen = mon;
+    }
+
+    /// Где можно ходить: рабочая область, а поверх полноэкранного окна — весь монитор (панели задач там не видно).
+    public static Rectangle AreaAt(Point p)
+    {
+        var scr = Screen.FromPoint(p);
+        return Fullscreen == scr.Bounds ? scr.Bounds : scr.WorkingArea;
     }
 
     public static bool GetRect(IntPtr h, out Rectangle r)
@@ -197,13 +227,32 @@ static class Desk
 class Settings
 {
     public string Skin { get; set; } = "classic";
-    public string Accessory { get; set; } = "none";
+    public List<string> Wear { get; set; } = new();
+    public string CustomBody { get; set; } = "#D97757";
+    public string CustomEye { get; set; } = "#181216";
+    public string CustomOutline { get; set; } = "#2A1812";
+
+    public static Color Hex(string s, Color fallback)
+    {
+        try { return ColorTranslator.FromHtml(s); } catch { return fallback; }
+    }
+
+    public static string Hex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+
+    /// Переносит свои цвета из настроек в скин «custom».
+    public void ApplyCustom() => Looks.SetCustom(
+        Hex(CustomBody, Color.FromArgb(217, 119, 87)), Hex(CustomEye, Color.FromArgb(24, 18, 22)), Hex(CustomOutline, Color.FromArgb(42, 24, 18)));
+
+    // аксессуар из прошлых версий, где можно было надеть только один
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string Accessory { get; set; }
     public int Size { get; set; } = 2;
     public int Mood { get; set; } = 1;
     public bool Bongo { get; set; } = true;
     public bool Windows { get; set; } = true;
     public bool Follow { get; set; }
     public bool SleepWhenIdle { get; set; } = true;
+    public bool HideInFullscreen { get; set; } = true;
     public string Language { get; set; } = "auto";
     public bool FirstRunDone { get; set; }
     public long Keys { get; set; }
@@ -222,6 +271,16 @@ class Settings
     public float Pixel => PixelSizes[Math.Clamp(Size, 0, PixelSizes.Length - 1)];
 
     public static Settings Load()
+    {
+        var s = LoadRaw();
+        s.Wear ??= new();
+        if (!string.IsNullOrEmpty(s.Accessory) && s.Accessory != "none" && !s.Wear.Contains(s.Accessory)) s.Wear.Add(s.Accessory);
+        s.Accessory = null;
+        s.ApplyCustom();
+        return s;
+    }
+
+    static Settings LoadRaw()
     {
         try
         {
@@ -330,7 +389,7 @@ class LayeredForm : Form
 
     protected override bool ShowWithoutActivation => true;
 
-    public void Present(Bitmap bmp, int x, int y)
+    public void Present(Bitmap bmp, int x, int y, byte alpha = 255)
     {
         IntPtr screenDc = Native.GetDC(IntPtr.Zero);
         IntPtr memDc = Native.CreateCompatibleDC(screenDc);
@@ -339,7 +398,7 @@ class LayeredForm : Form
         var size = new Native.SIZE(bmp.Width, bmp.Height);
         var src = new Native.POINT(0, 0);
         var dst = new Native.POINT(x, y);
-        var blend = new Native.BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+        var blend = new Native.BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = alpha, AlphaFormat = 1 };
         Native.UpdateLayeredWindow(Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);
         Native.SelectObject(memDc, old);
         Native.DeleteObject(hBmp);
