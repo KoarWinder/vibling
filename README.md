@@ -4,7 +4,7 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 
 [Русская версия ниже](#vibling-по-русски)
 
-![Vibling settings](docs/settings-en.png)
+![Vibling settings](docs/vibling-settings-en.png)
 
 ## Features
 
@@ -48,7 +48,7 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 Маленький пиксельный питомец для рабочего стола Windows. Гуляет по панели задач, забирается на окна, играет в мячик, садится за ноутбук, пока вы печатаете, и засыпает от скуки.
 
-![Настройки Vibling](docs/settings-ru.png)
+![Настройки Vibling](docs/vibling-settings-ru.png)
 
 ## Возможности
 
