@@ -1,0 +1,1159 @@
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
+using System.Runtime.InteropServices;
+
+namespace Vibling;
+
+class Particle
+{
+    public float X, Y, VX, VY, Life, Max, G, Size;
+    public int Kind;
+    public string Text;
+    public Color C;
+}
+
+enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn }
+enum AirKind { Drop, Jump, Flip }
+
+class PetForm : LayeredForm
+{
+    const float G = 2200;
+
+    public readonly Settings S;
+    readonly float U;
+    float P, LW, LH, FX, FY;
+    Bitmap bmp;
+
+    readonly Random rnd = new();
+    readonly Stopwatch sw = Stopwatch.StartNew();
+    readonly System.Windows.Forms.Timer timer = new();
+    readonly System.Windows.Forms.Timer updates = new();
+    readonly List<Particle> parts = new();
+    readonly Pose pose = new();
+    readonly NotifyIcon tray = new();
+    readonly HashSet<int> keysDown = new();
+    readonly Native.HookProc hookProc;
+    IntPtr hook;
+    SettingsWindow settingsWindow;
+    BallForm ball;
+
+    static readonly string[] CodeGlyphs = { "{ }", "</>", "=>", ";", "fn()", "++", "git", "0x1F", "[ ]", "//" };
+    static readonly Color Neon = Color.FromArgb(127, 233, 255);
+
+    float x, y, vx, vy, angle, spin, time, stT, stDur, targetX, speed, airT;
+    float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
+    float lastInteract, lastKeyT = -999;
+    int face = 1, paw;
+    bool goOff, teeterOff, umbrellaWanted, umbrellaOpen, waved, hidden;
+    St st = St.Air;
+    AirKind air = AirKind.Drop;
+    float jumpVX, jumpVY;
+    IntPtr onWin;
+    Rectangle winR;
+
+    bool mouseDown, dragging;
+    Point downPt;
+    PointF grabOff;
+    readonly Queue<(float t, Point p)> trail = new();
+    float dragVX;
+
+    public PetForm(Settings settings)
+    {
+        S = settings;
+        using (var g0 = Graphics.FromHwnd(IntPtr.Zero)) U = g0.DpiX / 96f;
+        Text = L.T("app");
+        ApplySize();
+
+        var wa = Screen.PrimaryScreen.WorkingArea;
+        x = wa.Left + wa.Width * 0.7f;
+        y = wa.Top + 60 * U;
+        umbrellaWanted = true;
+
+        tray.Icon = AppIcon.Get();
+        tray.Text = L.T("app");
+        tray.Visible = true;
+        tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) ShowSettings();
+            else if (e.Button == MouseButtons.Right) ShowMenu(Cursor.Position);
+        };
+
+        hookProc = HookCb;
+        using (var cur = Process.GetCurrentProcess())
+            hook = Native.SetWindowsHookEx(13, hookProc, Native.GetModuleHandle(cur.MainModule.ModuleName), 0);
+
+        timer.Interval = 30;
+        timer.Tick += (_, _) => Tick();
+        timer.Start();
+
+        updates.Interval = 3000;
+        updates.Tick += async (_, _) =>
+        {
+            updates.Stop();
+            await Updater.Check(this, false);
+        };
+        updates.Start();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Desk.Own.Add(Handle);
+    }
+
+    public void ApplySize()
+    {
+        P = S.Pixel;
+        LW = 36 * P; LH = 30 * P; FX = 18 * P; FY = 27 * P;
+        bmp?.Dispose();
+        bmp = new Bitmap((int)Math.Ceiling(LW * U), (int)Math.Ceiling(LH * U), PixelFormat.Format32bppArgb);
+    }
+
+    float Px => P * U;
+
+    void ShowMenu(Point at)
+    {
+        var skin = Looks.SkinById(S.Skin);
+        var icon = new Bitmap(19, 19);
+        using (var g = Graphics.FromImage(icon))
+        {
+            var p = new Pose();
+            p.Reset(0);
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            Sprite.Draw(g, p, skin, "none", 9.5f, 16.5f, 1);
+        }
+        PopupMenu.Entry Item(string key, Action act, bool check = false) => new() { Text = L.T(key), Act = act, Check = check };
+        var sep = new PopupMenu.Entry { Separator = true };
+        PopupMenu.Open(new List<PopupMenu.Entry>
+        {
+            new() { Text = L.T("app"), Header = true, Icon = icon },
+            sep,
+            Item("pet", PetMe),
+            Item("feed", Feed),
+            Item("ball", ToggleBall, ball != null),
+            Item("flip.menu", Flip),
+            Item(st == St.Sleep ? "wake" : "sleep", () =>
+            {
+                if (st == St.Sleep) WakeUp();
+                else if (Grounded && !Busy) Set(St.Yawn, 1.3f);
+            }),
+            sep,
+            Item("settings", ShowSettings),
+            Item(hidden ? "show" : "hide", () => SetHidden(!hidden)),
+            sep,
+            Item("quit", Quit),
+        }, at, U);
+    }
+
+    public void ShowSettings()
+    {
+        if (settingsWindow == null)
+        {
+            settingsWindow = new SettingsWindow(this);
+            settingsWindow.Closed += (_, _) => settingsWindow = null;
+            System.Windows.Forms.Integration.ElementHost.EnableModelessKeyboardInterop(settingsWindow);
+            settingsWindow.Show();
+        }
+        if (settingsWindow.WindowState == System.Windows.WindowState.Minimized) settingsWindow.WindowState = System.Windows.WindowState.Normal;
+        settingsWindow.Topmost = true;
+        settingsWindow.Topmost = false;
+        settingsWindow.Activate();
+        if (!S.FirstRunDone) { S.FirstRunDone = true; S.Save(); }
+    }
+
+    public void ReloadSettings()
+    {
+        var old = settingsWindow;
+        double? left = old?.Left, top = old?.Top;
+        old?.Close();
+        settingsWindow = null;
+        tray.Text = L.T("app");
+        Text = L.T("app");
+        ShowSettings();
+        if (left.HasValue)
+        {
+            settingsWindow.WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            settingsWindow.Left = left.Value;
+            settingsWindow.Top = top.Value;
+        }
+    }
+
+    public void OnUpdateFound(bool manual)
+    {
+        if (settingsWindow != null) settingsWindow.RefreshBanner();
+        else if (manual || (!fsHidden && Desk.Fullscreen == null)) ShowSettings();
+    }
+
+    public bool IsHidden => hidden;
+    public bool HasBall => ball != null;
+
+    bool fsHidden;
+    float fsT;
+
+    public void SetHidden(bool h)
+    {
+        hidden = h;
+        ApplyVisibility();
+    }
+
+    void ApplyVisibility()
+    {
+        bool show = !hidden && !fsHidden;
+        if (show == Visible) return;
+        if (show) { Show(); ball?.Show(); }
+        else { Hide(); ball?.Hide(); }
+    }
+
+    public void Quit()
+    {
+        S.Save();
+        timer.Stop();
+        if (hook != IntPtr.Zero) { Native.UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        tray.Visible = false;
+        tray.Dispose();
+        ball?.Close();
+        settingsWindow?.Close();
+        Application.Exit();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; return; }
+        S.Save();
+        if (hook != IntPtr.Zero) { Native.UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        tray.Visible = false;
+        base.OnFormClosing(e);
+    }
+
+    IntPtr HookCb(int n, IntPtr w, IntPtr l)
+    {
+        if (n >= 0)
+        {
+            int msg = (int)w, vk = Marshal.ReadInt32(l);
+            if (msg == 0x100 || msg == 0x104) { if (keysDown.Add(vk)) OnKey(); }
+            else if (msg == 0x101 || msg == 0x105) keysDown.Remove(vk);
+        }
+        return Native.CallNextHookEx(hook, n, w, l);
+    }
+
+    void OnKey()
+    {
+        S.Keys++;
+        lastKeyT = time;
+        if (!S.Bongo || hidden) return;
+        paw ^= 1;
+        pawT = 0.12f;
+        if (st == St.Sleep)
+        {
+            StartAir(AirKind.Jump, 0, -520 * U);
+            return;
+        }
+        if (st is St.Idle or St.Walk or St.Code or St.Look or St.Sit or St.Stretch or St.Dance or St.Wave)
+        {
+            if (st != St.Code) Set(St.Code, 3);
+            if (rnd.NextDouble() < 0.3) SpawnGlyph();
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        lastInteract = time;
+        if (e.Button == MouseButtons.Left)
+        {
+            mouseDown = true;
+            dragging = false;
+            downPt = Cursor.Position;
+            grabOff = new PointF(downPt.X - x, downPt.Y - y);
+            trail.Clear();
+        }
+        else if (e.Button == MouseButtons.Right)
+        {
+            Native.SetForegroundWindow(Handle);
+            ShowMenu(Cursor.Position);
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (!mouseDown || dragging) return;
+        var c = Cursor.Position;
+        if (Math.Abs(c.X - downPt.X) + Math.Abs(c.Y - downPt.Y) > 5 * U)
+        {
+            dragging = true;
+            dragVX = 0;
+            onWin = IntPtr.Zero;
+            Set(St.Drag);
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left || !mouseDown) return;
+        mouseDown = false;
+        if (dragging)
+        {
+            dragging = false;
+            float tvx = 0, tvy = 0;
+            if (trail.Count >= 2)
+            {
+                var a = trail.Peek();
+                var b = trail.Last();
+                float dt = Math.Max(0.016f, b.t - a.t);
+                tvx = Math.Clamp((b.p.X - a.p.X) / dt, -2600 * U, 2600 * U);
+                tvy = Math.Clamp((b.p.Y - a.p.Y) / dt, -2600 * U, 2600 * U);
+            }
+            StartAir(AirKind.Drop, tvx, tvy);
+        }
+        else PetMe();
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left) Flip();
+    }
+
+    bool Grounded => st is not (St.Drag or St.Air);
+    bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter;
+
+    void Set(St s, float dur = 0) { st = s; stT = 0; stDur = dur; }
+    float Rand(float a, float b) => a + (float)rnd.NextDouble() * (b - a);
+    Rectangle WA => Desk.AreaAt(new Point((int)x, (int)y - 10));
+
+    (float L, float R) Span()
+    {
+        if (onWin != IntPtr.Zero) return (winR.Left + 5 * U, winR.Right - 5 * U);
+        var wa = WA;
+        return (wa.Left + 9 * Px, wa.Right - 9 * Px);
+    }
+
+    public void PetMe()
+    {
+        lastInteract = time;
+        if (!Grounded || Busy) return;
+        S.Pets++;
+        if (st == St.Sleep) { WakeUp(); return; }
+        Set(St.Happy, 1.2f);
+        sqX = 1.15f; sqY = 0.85f;
+        for (int i = 0; i < 5; i++)
+            parts.Add(new Particle { Kind = 0, X = FX + Rand(-5, 5) * P, Y = FY - 13 * P, VX = Rand(-5, 5) * P, VY = Rand(-15, -8) * P, Life = 1.3f, Max = 1.3f, C = Color.FromArgb(255, 111, 168) });
+    }
+
+    public void Feed()
+    {
+        lastInteract = time;
+        parts.Add(new Particle { Kind = 2, X = FX, Y = 0, VY = 40, G = 500, Life = 3, Max = 3 });
+    }
+
+    public void Flip()
+    {
+        lastInteract = time;
+        if (!Grounded || Busy) return;
+        S.Flips++;
+        StartAir(AirKind.Flip, 0, -780 * U);
+    }
+
+    public void Summon()
+    {
+        var wa = Screen.PrimaryScreen.WorkingArea;
+        if (hidden) SetHidden(false);
+        x = wa.Left + wa.Width / 2f;
+        y = wa.Top + 40 * U;
+        StartAir(AirKind.Drop, 0, 0);
+        umbrellaWanted = true;
+    }
+
+    public void ToggleBall()
+    {
+        if (ball != null) { ball.Close(); ball = null; return; }
+        ball = new BallForm(U, x + face * 15 * Px, y - 22 * Px);
+        ball.VX = face * 300 * U;
+        ball.Removed += () => ball = null;
+        ball.Thrown += () => { if (Grounded && !Busy && st != St.Sleep) Set(St.Run); };
+        ball.Show();
+        if (Grounded && !Busy) Set(St.Run);
+    }
+
+    void WakeUp() => StartAir(AirKind.Jump, 0, -520 * U);
+
+    void SpawnGlyph()
+    {
+        parts.Add(new Particle
+        {
+            Kind = 1, Text = CodeGlyphs[rnd.Next(CodeGlyphs.Length)], X = FX + Rand(-7, 5) * P, Y = FY - 12 * P,
+            VX = Rand(-2, 2) * P, VY = Rand(-8, -5) * P, Life = 1.6f, Max = 1.6f,
+            C = rnd.Next(2) == 0 ? Neon : Looks.SkinById(S.Skin).Spark
+        });
+    }
+
+    void Dust(int n, float dir = 0)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            float side = dir != 0 ? dir : (i % 2 == 0 ? -1 : 1);
+            parts.Add(new Particle
+            {
+                Kind = 4, X = FX + side * Rand(2, 6) * P, Y = FY - Rand(0, 1) * P,
+                VX = side * Rand(8, 22) * P, VY = -Rand(2, 9) * P, G = 30 * P,
+                Life = Rand(0.3f, 0.6f), Max = 0.6f, Size = Rand(0.6f, 1.1f) * P, C = Color.FromArgb(225, 225, 235)
+            });
+        }
+    }
+
+    void StartAir(AirKind kind, float vx0, float vy0)
+    {
+        st = St.Air;
+        stT = 0;
+        air = kind;
+        vx = vx0;
+        vy = vy0;
+        airT = 0;
+        onWin = IntPtr.Zero;
+        umbrellaOpen = false;
+        umbrellaWanted = kind == AirKind.Drop && Math.Abs(vx0) < 700 * U && rnd.NextDouble() < 0.3;
+        float speed0 = (float)Math.Sqrt(vx0 * vx0 + vy0 * vy0);
+        if (kind == AirKind.Flip) spin = -face * 360f / (2 * -vy0 / (G * U));
+        else spin = 0;
+        if (kind == AirKind.Jump && vx0 != 0) face = Math.Sign(vx0);
+        Desk.Scan(true);
+    }
+
+    bool TryJumpTo(float tx, float top)
+    {
+        float g = G * U;
+        float dyUp = y - top;
+        float H = Math.Max(dyUp, 0) + 60 * U;
+        float t1 = (float)Math.Sqrt(2 * H / g);
+        float t2 = (float)Math.Sqrt(2 * (H - dyUp) / g);
+        jumpVY = -(float)Math.Sqrt(2 * g * H);
+        jumpVX = (tx - x) / (t1 + t2);
+        face = tx < x ? -1 : 1;
+        Set(St.Crouch, 0.22f);
+        return true;
+    }
+
+    bool JumpSomewhere()
+    {
+        if (!S.Windows) return false;
+        Desk.Scan(true);
+        var targets = Desk.JumpTargets(x, y, 40 * U, 380 * U, 450 * U, 20 * U)
+            .Where(t => t.h != onWin).ToList();
+        if (targets.Count == 0) return false;
+        var t = targets[rnd.Next(targets.Count)];
+        return TryJumpTo(t.x, t.top);
+    }
+
+    void Decide()
+    {
+        float act = new[] { 0.55f, 1f, 1.6f }[Math.Clamp(S.Mood, 0, 2)];
+        var cur = Cursor.Position;
+
+        if (S.Follow) { targetX = cur.X; speed = 110 * U; goOff = false; Set(St.Walk); return; }
+        if (S.SleepWhenIdle && time - lastInteract > 300 && time - lastKeyT > 300) { Set(St.Yawn, 1.4f); return; }
+        if (ball != null && rnd.NextDouble() < 0.6) { Set(St.Run); return; }
+
+        var (L, R) = Span();
+        var options = new (float w, Action a)[]
+        {
+            (3f * act, () =>
+            {
+                goOff = onWin != IntPtr.Zero && rnd.NextDouble() < 0.18 * act;
+                targetX = goOff ? (rnd.Next(2) == 0 ? L - 50 * U : R + 50 * U) : Rand(L, R);
+                speed = Rand(60, 85) * U * (act > 1 ? 1.3f : 1);
+                Set(St.Walk);
+            }),
+            (S.Windows ? 1.6f * act : 0, () => { if (!JumpSomewhere()) Set(St.Look, 2.4f); }),
+            (2f, () => Set(St.Code, Rand(8, 15))),
+            (1.2f, () => Set(St.Look, 2.4f)),
+            (0.6f, () => Set(St.Stretch, 1.6f)),
+            (1.4f / act, () => Set(St.Sit, Rand(3, 7))),
+            (0.35f * act, () => Set(St.Dance, 3f)),
+            (1.5f / act, () => Set(St.Idle, Rand(2, 5))),
+            (0.8f * act, () => { targetX = Math.Clamp(cur.X, L, R); speed = 130 * U; goOff = false; Set(St.Walk); }),
+            (0.25f * act, Flip),
+        };
+        float sum = options.Sum(o => o.w), pick = Rand(0, sum);
+        foreach (var o in options)
+        {
+            pick -= o.w;
+            if (pick <= 0) { o.a(); return; }
+        }
+        Set(St.Idle, 2);
+    }
+
+    void Tick()
+    {
+        float now = (float)sw.Elapsed.TotalSeconds;
+        float dt = Math.Min(0.05f, now - lastT);
+        lastT = now;
+        time += dt;
+        if (bmp.Width != (int)Math.Ceiling(36 * S.Pixel * U)) ApplySize();
+
+        fsT -= dt;
+        if (fsT <= 0)
+        {
+            fsT = 0.5f;
+            Desk.CheckFullscreen();
+            bool fs = S.HideInFullscreen && Desk.Fullscreen == Screen.FromPoint(new Point((int)x, (int)y - 10)).Bounds;
+            if (fs != fsHidden) { fsHidden = fs; ApplyVisibility(); }
+        }
+        if (fsHidden) return;
+
+        Step(dt);
+        ball?.Step(dt);
+        if (!hidden) Render();
+
+        saveT += dt;
+        if (saveT > 60) { saveT = 0; S.Save(); }
+        timer.Interval = st == St.Sleep ? 70 : 30;
+    }
+
+    void Step(float dt)
+    {
+        stT += dt;
+        pawT -= dt;
+        kickCd -= dt;
+        blinkT -= dt;
+        if (blinkT < -0.12f) blinkT = Rand(2, 5);
+        glanceT -= dt;
+        if (st == St.Idle && glanceT <= 0 && rnd.NextDouble() < dt * 0.4) Glance();
+        var cur = Cursor.Position;
+
+        if (Grounded) UpdateSurface(dt);
+
+        float tsx = 1, tsy = 1;
+
+        switch (st)
+        {
+            case St.Drag:
+            {
+                float nx = cur.X - grabOff.X;
+                dragVX += ((nx - x) / Math.Max(dt, 0.001f) - dragVX) * Math.Min(1, dt * 10);
+                x = nx;
+                y = cur.Y - grabOff.Y;
+                trail.Enqueue((time, cur));
+                while (trail.Count > 0 && time - trail.Peek().t > 0.08f) trail.Dequeue();
+                if ((MouseButtons & MouseButtons.Left) == 0 && mouseDown) OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+                break;
+            }
+
+            case St.Air:
+                StepAir(dt);
+                break;
+
+            case St.Idle:
+            {
+                var lt = LookTarget();
+                if (Math.Abs(lt.X - x) > 30 * U) face = lt.X < x ? -1 : 1;
+            }
+                CheckWave(dt, cur);
+                if (stT > stDur) Decide();
+                break;
+
+            case St.Walk:
+            {
+                var (L, R) = Span();
+                if (S.Follow) targetX = Math.Clamp(cur.X, L, R);
+                float dx = targetX - x;
+                if (Math.Abs(dx) < 3 * U) { Set(St.Idle, S.Follow ? 0.6f : Rand(1, 3)); break; }
+                face = Math.Sign(dx);
+                float nx = x + face * Math.Min(Math.Abs(dx), speed * dt);
+                if (onWin != IntPtr.Zero && ((face < 0 && nx <= L) || (face > 0 && nx >= R)))
+                {
+                    x = face < 0 ? L : R;
+                    if (goOff) { teeterOff = rnd.NextDouble() < 0.65; Set(St.Teeter, 1.1f); }
+                    else Set(St.Idle, Rand(1, 2));
+                    break;
+                }
+                x = nx;
+                if (stT > 25) Set(St.Idle, 1);
+                break;
+            }
+
+            case St.Run:
+                StepChase(dt);
+                break;
+
+            case St.Teeter:
+                if (stT > stDur)
+                {
+                    angle = 0;
+                    if (teeterOff) StartAir(AirKind.Jump, face * 150 * U, -420 * U);
+                    else { face = -face; var (L, R) = Span(); targetX = Rand(L, R); goOff = false; speed = 70 * U; Set(St.Walk); }
+                }
+                break;
+
+            case St.Crouch:
+                tsx = 1.2f; tsy = 0.75f;
+                if (stT > stDur) { StartAir(AirKind.Jump, jumpVX, jumpVY); sqX = 0.85f; sqY = 1.25f; }
+                break;
+
+            case St.Slide:
+            {
+                x += vx * dt;
+                vx *= (float)Math.Exp(-4 * dt);
+                dustT -= dt;
+                if (dustT <= 0) { dustT = 0.05f; Dust(1, -Math.Sign(vx) * face); }
+                var (L, R) = Span();
+                if (onWin != IntPtr.Zero && (x < L || x > R)) { StartAir(AirKind.Drop, vx, 0); break; }
+                if (onWin == IntPtr.Zero && (x <= L || x >= R)) { x = Math.Clamp(x, L, R); vx = -vx * 0.3f; sqX = 0.75f; }
+                if (Math.Abs(vx) < 60 * U) { vx = 0; Set(St.Idle, Rand(1, 2)); }
+                break;
+            }
+
+            case St.Code:
+                codeT -= dt;
+                if (codeT <= 0) { codeT = 0.4f; SpawnGlyph(); }
+                if (time - lastKeyT > 0.5f && pawT < -0.03f && rnd.NextDouble() < 0.15) { paw ^= 1; pawT = 0.1f; }
+                if (stT > stDur && time - lastKeyT > 3) Set(St.Idle, Rand(1, 3));
+                break;
+
+            case St.Sleep:
+                snoreT -= dt;
+                if (snoreT <= 0)
+                {
+                    snoreT = 1.3f;
+                    parts.Add(new Particle { Kind = 3, Text = rnd.Next(2) == 0 ? "z" : "Z", X = FX + 4 * P, Y = FY - 11 * P, VX = 2.5f * P, VY = -4 * P, Life = 2.2f, Max = 2.2f, C = Color.FromArgb(220, 225, 255) });
+                }
+                tsy = 1 + (float)Math.Sin(time * 2) * 0.04f;
+                break;
+
+            case St.Splat:
+                tsx = 1.3f; tsy = 0.65f;
+                if (stT > stDur) { Set(St.Dizzy, 1.6f); sqX = 0.8f; sqY = 1.3f; }
+                break;
+
+            case St.Dizzy:
+                if (stT > stDur) { angle = 0; Set(St.Idle, Rand(1, 2)); }
+                break;
+
+            case St.Stretch:
+                tsy = 1 + 0.16f * (float)Math.Sin(Math.Clamp(stT / stDur, 0, 1) * Math.PI);
+                tsx = 2 - tsy;
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
+                break;
+
+            case St.Look:
+                if ((int)(stT / 0.6f) % 2 == 1 && (int)((stT - dt) / 0.6f) % 2 == 0) face = -face;
+                CheckWave(dt, cur);
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
+                break;
+
+            case St.Dance:
+                face = (int)(stT / 0.35f) % 2 == 0 ? 1 : -1;
+                tsy = 1 - 0.08f * Math.Abs((float)Math.Sin(stT * 9));
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
+                break;
+
+            case St.Yawn:
+                if (stT > stDur) Set(St.Sleep);
+                break;
+
+            case St.Sit:
+                if (glanceT <= 0 && rnd.NextDouble() < dt * 0.3) Glance();
+                if (stT > stDur) Set(St.Idle, Rand(1, 2.5f));
+                break;
+
+            case St.Wave:
+            case St.Happy:
+            case St.Eat:
+            case St.Land:
+                if (st == St.Land) { tsx = 1.15f; tsy = 0.85f; }
+                if (stT > stDur) Set(St.Idle, Rand(1, 2.5f));
+                break;
+        }
+
+        if (st != St.Air || air != AirKind.Flip) angle *= (float)Math.Exp(-dt * 14);
+
+        sqX += (tsx - sqX) * Math.Min(1, dt * 12);
+        sqY += (tsy - sqY) * Math.Min(1, dt * 12);
+
+        for (int i = parts.Count - 1; i >= 0; i--)
+        {
+            var p = parts[i];
+            p.VY += p.G * dt;
+            p.X += p.VX * dt;
+            p.Y += p.VY * dt;
+            p.Life -= dt;
+            if (p.Kind == 2 && p.Y > FY - 10 * P)
+            {
+                parts.RemoveAt(i);
+                S.Tokens += 1000;
+                if (Grounded && !Busy && st != St.Sleep) { Set(St.Eat, 1.4f); sqX = 1.1f; sqY = 0.9f; }
+                continue;
+            }
+            if (p.Life <= 0) parts.RemoveAt(i);
+        }
+    }
+
+    bool UpdateSurface(float dt)
+    {
+        if (onWin != IntPtr.Zero)
+        {
+            if (!S.Windows || !Native.IsWindow(onWin) || !Native.IsWindowVisible(onWin) || Native.IsIconic(onWin) ||
+                Native.IsZoomed(onWin) || !Desk.GetRect(onWin, out var r))
+            {
+                StartAir(AirKind.Drop, 0, 0);
+                return false;
+            }
+            if (r != winR)
+            {
+                x += r.Left - winR.Left;
+                y = r.Top;
+                winR = r;
+            }
+            occT -= dt;
+            if (occT <= 0)
+            {
+                occT = 0.3f;
+                Desk.Scan();
+                if (!Desk.Standable(onWin, x)) { StartAir(AirKind.Drop, 0, 0); return false; }
+            }
+            var (L, R) = Span();
+            if ((x < L - 1 || x > R + 1) && st is not (St.Teeter or St.Slide))
+            {
+                StartAir(AirKind.Drop, face * 90 * U, -100 * U);
+                return false;
+            }
+        }
+        else
+        {
+            var wa = WA;
+            y = wa.Bottom;
+            var (L, R) = Span();
+            x = Math.Clamp(x, L, R);
+        }
+        return true;
+    }
+
+    void StepAir(float dt)
+    {
+        airT += dt;
+        float prevY = y;
+        var wa = WA;
+
+        if (umbrellaWanted && !umbrellaOpen && airT > 0.35f && vy > 200 * U) { umbrellaOpen = true; spin = 0; }
+        if (umbrellaOpen)
+        {
+            vy += (130 * U - vy) * Math.Min(1, dt * 5);
+            vx *= (float)Math.Exp(-2 * dt);
+            x += (float)Math.Sin(airT * 3) * 40 * U * dt;
+        }
+        else
+        {
+            vy += G * U * dt;
+            angle += spin * dt;
+        }
+        x += vx * dt;
+        y += vy * dt;
+
+        float side = 9 * Px;
+        if (x < wa.Left + side) { x = wa.Left + side; if (vx < 0) { vx = -vx * 0.55f; spin = -spin * 0.6f; sqX = 0.7f; sqY = 1.2f; } }
+        if (x > wa.Right - side) { x = wa.Right - side; if (vx > 0) { vx = -vx * 0.55f; spin = -spin * 0.6f; sqX = 0.7f; sqY = 1.2f; } }
+        float headroom = 14 * Px;
+        if (y - headroom < wa.Top && vy < 0) { y = wa.Top + headroom; vy = -vy * 0.35f; sqX = 1.2f; sqY = 0.8f; }
+
+        if (vy <= 0) return;
+
+        Desk.Scan();
+        float floor = wa.Bottom;
+        float landY = float.MaxValue;
+        IntPtr landW = IntPtr.Zero;
+        if (S.Windows && Desk.TryLand(x, prevY, y, 5 * U, out var t, out var h)) { landY = t; landW = h; }
+        if (y >= floor && floor < landY) { landY = floor; landW = IntPtr.Zero; }
+        if (landY != float.MaxValue) Land(landY, landW);
+    }
+
+    void Land(float top, IntPtr h)
+    {
+        y = top;
+        onWin = h;
+        if (h != IntPtr.Zero) Desk.GetRect(h, out winR);
+        float impact = vy, hv = Math.Abs(vx);
+        float a = ((angle % 360) + 540) % 360 - 180;
+        angle = a;
+        spin = 0;
+        vy = 0;
+        bool tumbled = Math.Abs(a) > 60;
+
+        if (umbrellaOpen)
+        {
+            umbrellaOpen = false;
+            sqX = 1.15f; sqY = 0.85f; vx = 0;
+            Dust(4);
+            Set(St.Idle, Rand(1, 2));
+        }
+        else if (air == AirKind.Flip)
+        {
+            sqX = 1.25f; sqY = 0.8f; vx = 0;
+            Dust(5);
+            Set(St.Happy, 0.6f);
+        }
+        else if (impact > 1900 * U || (tumbled && impact > 900 * U))
+        {
+            sqX = 1.3f; sqY = 0.65f; vx = 0;
+            Dust(14);
+            Set(St.Splat, 1f);
+        }
+        else if (hv > 650 * U)
+        {
+            vx *= 0.8f;
+            face = Math.Sign(vx);
+            Dust(8, -face);
+            Set(St.Slide);
+        }
+        else if (impact > 1000 * U)
+        {
+            sqX = 1.4f; sqY = 0.6f; vx = 0;
+            Dust(9);
+            Set(St.Land, 0.45f);
+        }
+        else
+        {
+            sqX = 1.2f; sqY = 0.82f; vx = 0;
+            Dust(4);
+            Set(St.Idle, Rand(0.8f, 2));
+        }
+    }
+
+    void StepChase(float dt)
+    {
+        if (ball == null || ball.IsDisposed) { Set(St.Idle, 1); return; }
+        if (ball.Held) { face = ball.X < x ? -1 : 1; return; }
+        float dx = ball.X - x;
+        face = dx < 0 ? -1 : 1;
+        float ballBottom = ball.Y + ball.Rad;
+        bool sameLevel = Math.Abs(ballBottom - y) < 45 * U;
+
+        if (!sameLevel && ball.Grounded && ballBottom < y - 45 * U && Math.Abs(dx) < 450 * U && S.Windows)
+        {
+            TryJumpTo(ball.X - face * 20 * U, ballBottom);
+            return;
+        }
+        var (sl, sr) = Span();
+        bool cornered = onWin == IntPtr.Zero && (ball.X < sl || ball.X > sr) &&
+                        Math.Abs(Math.Clamp(ball.X, sl, sr) - x) < 2 * U && Math.Abs(dx) < 14 * Px;
+        if (Math.Abs(dx) > 4 * Px && !cornered)
+        {
+            float nx = x + face * Math.Min(Math.Abs(dx), 190 * U * dt);
+            if (onWin != IntPtr.Zero && (nx < sl || nx > sr)) { x = nx; StartAir(AirKind.Jump, face * 160 * U, -380 * U); return; }
+            x = nx;
+        }
+        else if (kickCd <= 0 && ballBottom > y - 12 * Px)
+        {
+            int dir = cornered ? (ball.X < sl ? 1 : -1) : face;
+            ball.VX = dir * Rand(350, 750) * U;
+            ball.VY = -Rand(cornered ? 700 : 450, 900) * U;
+            kickCd = 0.7f;
+            sqX = 0.85f; sqY = 1.2f;
+        }
+        if (stT > 25) Set(St.Idle, 3);
+    }
+
+    PointF glance;
+    float glanceT;
+
+    void Glance()
+    {
+        glance = new PointF(x + Rand(-300, 300) * U, y - Rand(-20, 260) * U);
+        glanceT = Rand(1.2f, 2.5f);
+    }
+
+    PointF LookTarget()
+    {
+        if (ball != null && !ball.IsDisposed) return new PointF(ball.X, ball.Y);
+        if (st == St.Walk) return new PointF(targetX, y - 7 * Px);
+        if (st == St.Air && air == AirKind.Jump) return new PointF(x + vx, y);
+        if (glanceT > 0) return glance;
+        return Cursor.Position;
+    }
+
+    void CheckWave(float dt, Point cur)
+    {
+        float dx = cur.X - x, dy = cur.Y - (y - 7 * Px);
+        if (dx * dx + dy * dy < (110 * U) * (110 * U)) nearT += dt;
+        else { nearT = 0; waved = false; }
+        if (nearT > 1.2f && !waved) { waved = true; face = dx < 0 ? -1 : 1; Set(St.Wave, 1.5f); }
+    }
+
+    void BuildPose()
+    {
+        pose.Reset(time);
+        var t = LookTarget();
+        float eyeY = y - 7 * Px;
+        int lx = t.X > x + 30 * U ? 1 : t.X < x - 30 * U ? -1 : 0;
+        pose.LookX = lx * face;
+        pose.LookY = t.Y < eyeY - 60 * U ? -1 : t.Y > eyeY + 60 * U ? 1 : 0;
+        if (blinkT < 0) pose.Eyes = Eyes.Blink;
+
+        switch (st)
+        {
+            case St.Walk: pose.Legs = Legs.Walk; pose.Arms = Arms.Swing; break;
+            case St.Run:
+                if (ball != null && ball.Held) break;
+                pose.Legs = Legs.Run; pose.Arms = Arms.Swing; break;
+            case St.Code:
+                pose.Sit = true; pose.Laptop = true; pose.Arms = Arms.Typing;
+                pose.LaptopLit = pawT > 0 || time - lastKeyT < 0.3f;
+                pose.Paw = pawT > 0 ? paw : -1;
+                pose.LookX = 0; pose.LookY = 1;
+                break;
+            case St.Sleep: pose.Sit = true; pose.Eyes = Eyes.Closed; break;
+            case St.Drag: pose.Legs = Legs.Dangle; pose.Arms = Arms.Flail; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Air:
+                if (air == AirKind.Flip) { pose.Legs = Legs.Tuck; pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; }
+                else if (air == AirKind.Jump) { pose.Legs = Legs.Tuck; pose.Arms = Arms.Up; if (vy > 0) pose.Eyes = Eyes.Wide; }
+                else if (umbrellaOpen) { pose.Arms = Arms.Umbrella; pose.Umbrella = true; pose.Eyes = Eyes.Happy; pose.Legs = Legs.Stand; }
+                else { pose.Legs = Legs.Dangle; pose.Arms = Arms.Flail; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.Open; }
+                break;
+            case St.Land: pose.Legs = Legs.Brace; pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.O; break;
+            case St.Splat: pose.Legs = Legs.Hidden; pose.Arms = Arms.Out; pose.Eyes = Eyes.Squint; break;
+            case St.Dizzy: pose.Eyes = Eyes.Dizzy; pose.Mouth = Mouth.O; break;
+            case St.Slide: pose.Legs = Legs.Brace; pose.Arms = Arms.Out; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Happy: pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Smile; break;
+            case St.Eat: pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; break;
+            case St.Crouch: pose.Legs = Legs.Brace; break;
+            case St.Teeter: pose.Legs = Legs.Brace; pose.Arms = Arms.Out; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Stretch:
+                pose.Arms = Arms.Up; pose.Eyes = Eyes.Closed;
+                if (stT > 0.35f && stT < 1.2f) pose.Mouth = Mouth.Yawn;
+                break;
+            case St.Yawn: pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.Yawn; break;
+            case St.Look: pose.LookX = 1; if (pose.Eyes != Eyes.Blink) pose.Eyes = Eyes.Open; break;
+            case St.Sit: pose.Sit = true; if ((int)stT % 5 == 4) pose.Eyes = Eyes.Happy; break;
+            case St.Dance:
+                pose.Arms = (int)(stT * 3) % 2 == 0 ? Arms.Up : Arms.Swing;
+                pose.Legs = Legs.Run; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile;
+                break;
+            case St.Wave: pose.Arms = Arms.Wave; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; break;
+        }
+    }
+
+    readonly Dictionary<int, Font> fonts = new();
+    static readonly string[] Heart = { ".X.X.", "XXXXX", "XXXXX", ".XXX.", "..X.." };
+
+    void Render()
+    {
+        var skin = Looks.SkinById(S.Skin);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        g.ScaleTransform(U, U);
+        g.SmoothingMode = SmoothingMode.None;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.TextRenderingHint = TextRenderingHint.AntiAlias;
+
+        float hop = st == St.Happy ? -Math.Abs((float)Math.Sin(stT * 10)) * 2 * P : 0;
+
+        if (Grounded)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var sh = new SolidBrush(Color.FromArgb(45, 0, 0, 0));
+            g.FillEllipse(sh, FX - 8 * P * sqX, FY - 0.5f * P, 16 * P * sqX, P);
+            g.SmoothingMode = SmoothingMode.None;
+        }
+
+        BuildPose();
+        Sprite.Draw(g, pose, skin, S.Wear, FX, FY + hop, P, face, sqX, sqY, angle);
+
+        if (st == St.Dizzy || st == St.Splat)
+        {
+            using var yb = new SolidBrush(Color.FromArgb(255, 220, 90));
+            float baseY = st == St.Splat ? FY - 5 * P : FY - 14 * P;
+            for (int i = 0; i < 3; i++)
+            {
+                double a = time * 5 + i * Math.PI * 2 / 3;
+                float sx = FX + (float)Math.Cos(a) * 7 * P, sy = baseY + (float)Math.Sin(a) * 1.3f * P;
+                g.FillRectangle(yb, sx - 0.3f * P, sy - P, 0.6f * P, 2 * P);
+                g.FillRectangle(yb, sx - P, sy - 0.3f * P, 2 * P, 0.6f * P);
+            }
+        }
+
+        foreach (var p in parts) DrawParticle(g, p, skin);
+
+        Present(bmp, (int)Math.Round(x - FX * U), (int)Math.Round(y - FY * U));
+    }
+
+    void DrawParticle(Graphics g, Particle p, Skin skin)
+    {
+        int alpha = (int)(255 * Math.Clamp(p.Life / p.Max * 1.6f, 0, 1));
+        switch (p.Kind)
+        {
+            case 0:
+            {
+                float c3 = P * 0.6f;
+                using var hb = new SolidBrush(Color.FromArgb(alpha, p.C));
+                using var ob = new SolidBrush(Color.FromArgb(alpha, skin.Outline));
+                for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++)
+                    if (Heart[r][c] == 'X') g.FillRectangle(ob, p.X + c * c3 - c3 / 3, p.Y + r * c3 - c3 / 3, c3 * 5 / 3, c3 * 5 / 3);
+                for (int r = 0; r < 5; r++) for (int c = 0; c < 5; c++)
+                    if (Heart[r][c] == 'X') g.FillRectangle(hb, p.X + c * c3, p.Y + r * c3, c3, c3);
+                break;
+            }
+            case 1:
+            case 3:
+            {
+                float size = (p.Kind == 3 ? 1.5f + (1 - p.Life / p.Max) : 1.5f) * P;
+                int key = (int)Math.Round(size);
+                if (!fonts.TryGetValue(key, out var f)) fonts[key] = f = new Font("Consolas", key, FontStyle.Bold, GraphicsUnit.Pixel);
+                using var shb = new SolidBrush(Color.FromArgb(alpha, skin.Outline));
+                using var tb = new SolidBrush(Color.FromArgb(alpha, p.C));
+                g.DrawString(p.Text, f, shb, p.X + 1, p.Y + 1);
+                g.DrawString(p.Text, f, tb, p.X, p.Y);
+                break;
+            }
+            case 2:
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using var cb = new SolidBrush(Color.FromArgb(255, 205, 60));
+                using var cp = new Pen(skin.Outline, 2);
+                float w = 2.4f * P * Math.Abs((float)Math.Cos(time * 8)) + 3;
+                g.FillEllipse(cb, p.X - w / 2, p.Y - 1.2f * P, w, 2.4f * P);
+                g.DrawEllipse(cp, p.X - w / 2, p.Y - 1.2f * P, w, 2.4f * P);
+                g.SmoothingMode = SmoothingMode.None;
+                break;
+            }
+            case 4:
+            {
+                using var db = new SolidBrush(Color.FromArgb((int)(alpha * 0.8f), p.C));
+                g.FillRectangle(db, p.X - p.Size / 2, p.Y - p.Size / 2, p.Size, p.Size);
+                break;
+            }
+        }
+    }
+}
+
+class BallForm : LayeredForm
+{
+    public float X, Y, VX, VY;
+    public bool Held { get; private set; }
+    public bool Grounded { get; private set; }
+    public float Rad => R * U;
+    public event Action Removed, Thrown;
+
+    readonly float U, R = 13;
+    readonly Bitmap bmp;
+    readonly Stopwatch sw = Stopwatch.StartNew();
+    readonly Queue<(float t, Point p)> trail = new();
+    float rot;
+    PointF off;
+
+    public BallForm(float u, float x, float y)
+    {
+        U = u; X = x; Y = y;
+        bmp = new Bitmap((int)Math.Ceiling(32 * U), (int)Math.Ceiling(32 * U), PixelFormat.Format32bppArgb);
+        Text = "Мячик";
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Desk.Own.Add(Handle);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+        {
+            Held = true;
+            var c = Cursor.Position;
+            off = new PointF(c.X - X, c.Y - Y);
+            trail.Clear();
+        }
+        else if (e.Button == MouseButtons.Right) Close();
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left || !Held) return;
+        Held = false;
+        VX = VY = 0;
+        if (trail.Count >= 2)
+        {
+            var a = trail.Peek();
+            var b = trail.Last();
+            float dt = Math.Max(0.016f, b.t - a.t);
+            VX = Math.Clamp((b.p.X - a.p.X) / dt, -3000 * U, 3000 * U);
+            VY = Math.Clamp((b.p.Y - a.p.Y) / dt, -3000 * U, 3000 * U);
+        }
+        Thrown?.Invoke();
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        Desk.Own.Remove(Handle);
+        Removed?.Invoke();
+        base.OnFormClosed(e);
+    }
+
+    public void Step(float dt)
+    {
+        if (IsDisposed) return;
+        float rad = Rad;
+        var wa = Desk.AreaAt(new Point((int)X, (int)Y));
+        if (Held)
+        {
+            var c = Cursor.Position;
+            X = c.X - off.X;
+            Y = c.Y - off.Y;
+            float t = (float)sw.Elapsed.TotalSeconds;
+            trail.Enqueue((t, c));
+            while (trail.Count > 0 && t - trail.Peek().t > 0.08f) trail.Dequeue();
+            if ((MouseButtons & MouseButtons.Left) == 0) OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+            Grounded = false;
+        }
+        else
+        {
+            float prevBottom = Y + rad;
+            VY += 2000 * U * dt;
+            X += VX * dt;
+            Y += VY * dt;
+            Grounded = false;
+
+            float landTop = float.MaxValue;
+            if (VY >= 0)
+            {
+                Desk.Scan();
+                if (Desk.TryLand(X, prevBottom, Y + rad, 2 * U, out var top, out _)) landTop = top;
+                if (Y + rad >= wa.Bottom && wa.Bottom < landTop) landTop = wa.Bottom;
+            }
+            if (landTop != float.MaxValue)
+            {
+                Y = landTop - rad;
+                if (VY > 0) VY = -VY * 0.55f;
+                if (Math.Abs(VY) < 140 * U) VY = 0;
+                Grounded = true;
+            }
+            if (Y - rad < wa.Top) { Y = wa.Top + rad; VY = Math.Abs(VY) * 0.5f; }
+            if (X - rad < wa.Left) { X = wa.Left + rad; VX = Math.Abs(VX) * 0.7f; }
+            if (X + rad > wa.Right) { X = wa.Right - rad; VX = -Math.Abs(VX) * 0.7f; }
+            if (Grounded)
+            {
+                VX *= 1 - Math.Min(1, 1.6f * dt);
+                if (Math.Abs(VX) < 5 * U) VX = 0;
+            }
+            rot += VX * dt / rad;
+        }
+        if (Visible) Render();
+    }
+
+    void Render()
+    {
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        g.ScaleTransform(U, U);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new RectangleF(16 - R, 16 - R, R * 2, R * 2);
+        using (var w = new SolidBrush(Color.FromArgb(255, 250, 244))) g.FillEllipse(w, rect);
+        Color[] cols = { Color.FromArgb(217, 119, 87), Color.FromArgb(127, 233, 255), Color.FromArgb(255, 205, 60) };
+        float deg = rot * 180 / (float)Math.PI;
+        for (int i = 0; i < 3; i++)
+        {
+            using var b = new SolidBrush(cols[i]);
+            g.FillPie(b, rect.X, rect.Y, rect.Width, rect.Height, deg + i * 120, 60);
+        }
+        using (var p = new Pen(Color.FromArgb(42, 24, 18), 2)) g.DrawEllipse(p, rect);
+        using (var hl = new SolidBrush(Color.FromArgb(120, 255, 255, 255))) g.FillEllipse(hl, 16 - R * 0.55f, 16 - R * 0.7f, R * 0.6f, R * 0.4f);
+        Present(bmp, (int)Math.Round(X - 16 * U), (int)Math.Round(Y - 16 * U));
+    }
+}
