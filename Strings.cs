@@ -36,7 +36,6 @@ static class L
     static readonly Dictionary<string, (string ru, string en)> Table = new()
     {
         ["app"] = ("Vibling", "Vibling"),
-        ["tagline"] = ("Питомец для рабочего стола", "A tiny desktop pet"),
 
         ["pet"] = ("Погладить", "Pet"),
         ["feed"] = ("Покормить", "Feed"),
@@ -53,13 +52,9 @@ static class L
         ["quit.button"] = ("Выйти", "Quit"),
         ["summon"] = ("Позвать на экран", "Call to screen"),
         ["autostart"] = ("Запуск вместе с Windows", "Start with Windows"),
-        ["stats"] = ("Погладили: {0}\nНажатий клавиш: {1}\nСъедено токенов: {2}", "Pets: {0}\nKeys pressed: {1}\nTokens eaten: {2}"),
 
-        ["sec.skin"] = ("Скин", "Skin"),
-        ["sec.accessory"] = ("Аксессуар", "Accessory"),
         ["sec.size"] = ("Размер", "Size"),
         ["sec.mood"] = ("Характер", "Personality"),
-        ["sec.behavior"] = ("Поведение", "Behavior"),
         ["sec.language"] = ("Язык", "Language"),
 
         ["size.0"] = ("Маленький", "Small"),
