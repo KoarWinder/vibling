@@ -14,7 +14,7 @@ class Particle
     public Color C;
 }
 
-enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn }
+enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn, Float }
 enum AirKind { Drop, Jump, Flip }
 
 class PetForm : LayeredForm
@@ -46,6 +46,9 @@ class PetForm : LayeredForm
     float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
     float lastInteract, lastKeyT = -999;
     int face = 1, paw;
+    float bonkT, fHappyT, fEatT, fFlipT, wanderT;
+    PointF wanderTo;
+    bool fSleep;
     bool goOff, teeterOff, umbrellaWanted, umbrellaOpen, waved, hidden;
     St st = St.Air;
     AirKind air = AirKind.Drop;
@@ -134,9 +137,11 @@ class PetForm : LayeredForm
             Item("feed", Feed),
             Item("ball", ToggleBall, ball != null),
             Item("flip.menu", Flip),
+            Item("opt.zerog", () => S.ZeroG = !S.ZeroG, S.ZeroG),
             Item(st == St.Sleep ? "wake" : "sleep", () =>
             {
-                if (st == St.Sleep) WakeUp();
+                if (st == St.Float) fSleep = !fSleep;
+                else if (st == St.Sleep) WakeUp();
                 else if (Grounded && !Busy) Set(St.Yawn, 1.3f);
             }),
             sep,
@@ -250,6 +255,12 @@ class PetForm : LayeredForm
             StartAir(AirKind.Jump, 0, -520 * U);
             return;
         }
+        if (st == St.Float)
+        {
+            fSleep = false;
+            if (rnd.NextDouble() < 0.3) SpawnGlyph();
+            return;
+        }
         if (st is St.Idle or St.Walk or St.Code or St.Look or St.Sit or St.Stretch or St.Dance or St.Wave)
         {
             if (st != St.Code) Set(St.Code, 3);
@@ -304,7 +315,8 @@ class PetForm : LayeredForm
                 tvx = Math.Clamp((b.p.X - a.p.X) / dt, -2600 * U, 2600 * U);
                 tvy = Math.Clamp((b.p.Y - a.p.Y) / dt, -2600 * U, 2600 * U);
             }
-            StartAir(AirKind.Drop, tvx, tvy);
+            if (S.ZeroG) StartFloat(tvx, tvy);
+            else StartAir(AirKind.Drop, tvx, tvy);
         }
         else PetMe();
     }
@@ -314,7 +326,7 @@ class PetForm : LayeredForm
         if (e.Button == MouseButtons.Left) Flip();
     }
 
-    bool Grounded => st is not (St.Drag or St.Air);
+    bool Grounded => st is not (St.Drag or St.Air or St.Float);
     bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter;
 
     void Set(St s, float dur = 0) { st = s; stT = 0; stDur = dur; }
@@ -331,11 +343,11 @@ class PetForm : LayeredForm
     public void PetMe()
     {
         lastInteract = time;
-        if (!Grounded || Busy) return;
+        if (st != St.Float && (!Grounded || Busy)) return;
         S.Pets++;
         if (st == St.Sleep) { WakeUp(); return; }
-        Set(St.Happy, 1.2f);
-        sqX = 1.15f; sqY = 0.85f;
+        if (st == St.Float) { fSleep = false; fHappyT = 1.2f; }
+        else { Set(St.Happy, 1.2f); sqX = 1.15f; sqY = 0.85f; }
         for (int i = 0; i < 5; i++)
             parts.Add(new Particle { Kind = 0, X = FX + Rand(-5, 5) * P, Y = FY - 13 * P, VX = Rand(-5, 5) * P, VY = Rand(-15, -8) * P, Life = 1.3f, Max = 1.3f, C = Color.FromArgb(255, 111, 168) });
     }
@@ -349,6 +361,7 @@ class PetForm : LayeredForm
     public void Flip()
     {
         lastInteract = time;
+        if (st == St.Float) { S.Flips++; fFlipT = 0.7f; return; }
         if (!Grounded || Busy) return;
         S.Flips++;
         StartAir(AirKind.Flip, 0, -780 * U);
@@ -521,6 +534,9 @@ class PetForm : LayeredForm
         var cur = Cursor.Position;
 
         if (Grounded) UpdateSurface(dt);
+        if (S.ZeroG && st != St.Drag && st != St.Float) StartFloat(vx, vy);
+        else if (!S.ZeroG && st == St.Float) { fSleep = false; StartAir(AirKind.Drop, vx, vy); }
+        BallForm.ZeroG = S.ZeroG;
 
         float tsx = 1, tsy = 1;
 
@@ -540,6 +556,10 @@ class PetForm : LayeredForm
 
             case St.Air:
                 StepAir(dt);
+                break;
+
+            case St.Float:
+                StepFloat(dt, cur);
                 break;
 
             case St.Idle:
@@ -594,7 +614,8 @@ class PetForm : LayeredForm
                 x += vx * dt;
                 vx *= (float)Math.Exp(-4 * dt);
                 dustT -= dt;
-                if (dustT <= 0) { dustT = 0.05f; Dust(1, -Math.Sign(vx) * face); }
+                if (Math.Abs(vx) > 1) face = Math.Sign(vx);
+                if (dustT <= 0) { dustT = 0.05f; Dust(1, face); }
                 var (L, R) = Span();
                 if (onWin != IntPtr.Zero && (x < L || x > R)) { StartAir(AirKind.Drop, vx, 0); break; }
                 if (onWin == IntPtr.Zero && (x <= L || x >= R)) { x = Math.Clamp(x, L, R); vx = -vx * 0.3f; sqX = 0.75f; }
@@ -664,7 +685,7 @@ class PetForm : LayeredForm
                 break;
         }
 
-        if (st != St.Air || air != AirKind.Flip) angle *= (float)Math.Exp(-dt * 14);
+        if (st != St.Float && (st != St.Air || air != AirKind.Flip)) angle *= (float)Math.Exp(-dt * 14);
 
         sqX += (tsx - sqX) * Math.Min(1, dt * 12);
         sqY += (tsy - sqY) * Math.Min(1, dt * 12);
@@ -680,10 +701,94 @@ class PetForm : LayeredForm
             {
                 parts.RemoveAt(i);
                 S.Tokens += 1000;
-                if (Grounded && !Busy && st != St.Sleep) { Set(St.Eat, 1.4f); sqX = 1.1f; sqY = 0.9f; }
+                if (st == St.Float) fEatT = 1.4f;
+                else if (Grounded && !Busy && st != St.Sleep) { Set(St.Eat, 1.4f); sqX = 1.1f; sqY = 0.9f; }
                 continue;
             }
             if (p.Life <= 0) parts.RemoveAt(i);
+        }
+    }
+
+    void StartFloat(float vx0, float vy0)
+    {
+        st = St.Float;
+        stT = 0;
+        onWin = IntPtr.Zero;
+        umbrellaOpen = false;
+        vx = vx0;
+        vy = vx0 == 0 && vy0 == 0 ? -120 * U : vy0;
+        wanderT = 0;
+    }
+
+    void StepFloat(float dt, Point cur)
+    {
+        var wa = WA;
+        float left = wa.Left + 9 * Px, right = wa.Right - 9 * Px, top = wa.Top + 15 * Px, bottom = wa.Bottom - Px;
+
+        wanderT -= dt;
+        PointF target;
+        if (ball != null && !ball.IsDisposed && !fSleep) target = new PointF(ball.X, ball.Y + 7 * Px);
+        else if (S.Follow) target = new PointF(cur.X, cur.Y + 20 * Px);
+        else
+        {
+            if (wanderT <= 0)
+            {
+                wanderT = Rand(2.5f, 6);
+                wanderTo = new PointF(Rand(left, right), Rand(Math.Min(top + 40 * U, bottom), bottom));
+            }
+            target = wanderTo;
+        }
+
+        float drive = fSleep ? 0 : time - lastKeyT < 2.5f ? 30 * U : 140 * U;
+        float dx = target.X - x, dy = target.Y - y, d = Math.Max(1, MathF.Sqrt(dx * dx + dy * dy));
+        if (d > 20 * U) { vx += dx / d * drive * dt; vy += dy / d * drive * dt; }
+        vy += MathF.Sin(time * 1.7f) * 18 * U * dt;
+        float damp = MathF.Exp(-(fSleep ? 1.2f : 0.45f) * dt);
+        vx *= damp;
+        vy *= damp;
+        x += vx * dt;
+        y += vy * dt;
+
+        float hit = 0;
+        if (x < left) { x = left; hit = Math.Abs(vx); vx = Math.Abs(vx) * 0.75f; sqX = 0.8f; sqY = 1.15f; }
+        if (x > right) { x = right; hit = Math.Abs(vx); vx = -Math.Abs(vx) * 0.75f; sqX = 0.8f; sqY = 1.15f; }
+        if (y < top) { y = top; hit = Math.Max(hit, Math.Abs(vy)); vy = Math.Abs(vy) * 0.75f; sqX = 1.15f; sqY = 0.8f; }
+        if (y > bottom) { y = bottom; hit = Math.Max(hit, Math.Abs(vy)); vy = -Math.Abs(vy) * 0.75f; sqX = 1.15f; sqY = 0.8f; }
+        if (hit > 90 * U && bonkT <= 0.1f) bonkT = Math.Min(0.8f, 0.3f + hit / (3000 * U));
+        if (Math.Abs(vx) > 25 * U) face = Math.Sign(vx);
+
+        if (ball != null && !ball.IsDisposed && !ball.Held && kickCd <= 0)
+        {
+            float bx = ball.X - x, by = ball.Y - (y - 6 * Px), bd = MathF.Sqrt(bx * bx + by * by);
+            if (bd < 12 * Px)
+            {
+                bd = Math.Max(1, bd);
+                ball.VX = bx / bd * Rand(400, 700) * U;
+                ball.VY = by / bd * Rand(400, 700) * U;
+                kickCd = 0.6f;
+                fHappyT = 0.4f;
+            }
+        }
+
+        bonkT -= dt;
+        fHappyT -= dt;
+        fEatT -= dt;
+        if (fFlipT > 0)
+        {
+            fFlipT -= dt;
+            angle = fFlipT > 0 ? -face * 360 * (1 - fFlipT / 0.7f) : 0;
+        }
+        else angle = MathF.Sin(time * 2.2f) * (fSleep ? 3 : 6);
+
+        if (S.SleepWhenIdle && !fSleep && time - lastInteract > 300 && time - lastKeyT > 300) fSleep = true;
+        if (fSleep)
+        {
+            snoreT -= dt;
+            if (snoreT <= 0)
+            {
+                snoreT = 1.3f;
+                parts.Add(new Particle { Kind = 3, Text = rnd.Next(2) == 0 ? "z" : "Z", X = FX + 4 * P, Y = FY - 11 * P, VX = 2.5f * P, VY = -4 * P, Life = 2.2f, Max = 2.2f, C = Color.FromArgb(220, 225, 255) });
+            }
         }
     }
 
@@ -800,7 +905,7 @@ class PetForm : LayeredForm
         {
             vx *= 0.8f;
             face = Math.Sign(vx);
-            Dust(8, -face);
+            Dust(8, face);
             Set(St.Slide);
         }
         else if (impact > 1000 * U)
@@ -909,8 +1014,8 @@ class PetForm : LayeredForm
                 break;
             case St.Land: pose.Legs = Legs.Brace; pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.O; break;
             case St.Splat: pose.Legs = Legs.Hidden; pose.Arms = Arms.Out; pose.Eyes = Eyes.Squint; break;
-            case St.Dizzy: pose.Eyes = Eyes.Dizzy; pose.Mouth = Mouth.O; break;
-            case St.Slide: pose.Legs = Legs.Brace; pose.Arms = Arms.Out; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Dizzy: pose.Eyes = Eyes.Closed; break;
+            case St.Slide: pose.Legs = Legs.Skid; pose.Arms = Arms.Out; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
             case St.Happy: pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Smile; break;
             case St.Eat: pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; break;
             case St.Crouch: pose.Legs = Legs.Brace; break;
@@ -927,6 +1032,26 @@ class PetForm : LayeredForm
                 pose.Legs = Legs.Run; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile;
                 break;
             case St.Wave: pose.Arms = Arms.Wave; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; break;
+            case St.Float:
+                if (bonkT > 0) { pose.Eyes = Eyes.Squint; pose.Arms = Arms.Out; pose.Legs = Legs.Dangle; }
+                else if (fSleep) { pose.Eyes = Eyes.Closed; pose.Legs = Legs.Tuck; }
+                else if (S.Bongo && time - lastKeyT < 2.5f)
+                {
+                    pose.Sit = true; pose.Laptop = true; pose.Arms = Arms.Typing;
+                    pose.LaptopLit = pawT > 0 || time - lastKeyT < 0.3f;
+                    pose.Paw = pawT > 0 ? paw : -1;
+                    pose.LookX = 0; pose.LookY = 1;
+                }
+                else if (fEatT > 0) { pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; pose.Legs = Legs.Dangle; }
+                else if (fHappyT > 0 || fFlipT > 0) { pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Legs = Legs.Tuck; }
+                else
+                {
+                    int beat = (int)(time * 2.5f) % 4;
+                    pose.Arms = beat switch { 0 => Arms.Up, 1 => Arms.Wave, 2 => Arms.Up, _ => Arms.Swing };
+                    pose.Legs = Legs.Dangle;
+                    if ((int)(time * 0.5f) % 3 == 0) pose.Eyes = Eyes.Happy;
+                }
+                break;
         }
     }
 
@@ -1028,6 +1153,7 @@ class BallForm : LayeredForm
     public float X, Y, VX, VY;
     public bool Held { get; private set; }
     public bool Grounded { get; private set; }
+    public static bool ZeroG;
     public float Rad => R * U;
     public event Action Removed, Thrown;
 
@@ -1101,6 +1227,20 @@ class BallForm : LayeredForm
             while (trail.Count > 0 && t - trail.Peek().t > 0.08f) trail.Dequeue();
             if ((MouseButtons & MouseButtons.Left) == 0) OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
             Grounded = false;
+        }
+        else if (ZeroG)
+        {
+            X += VX * dt;
+            Y += VY * dt;
+            float damp = MathF.Exp(-0.25f * dt);
+            VX *= damp;
+            VY *= damp;
+            if (Y + rad > wa.Bottom) { Y = wa.Bottom - rad; VY = -Math.Abs(VY) * 0.8f; }
+            if (Y - rad < wa.Top) { Y = wa.Top + rad; VY = Math.Abs(VY) * 0.8f; }
+            if (X - rad < wa.Left) { X = wa.Left + rad; VX = Math.Abs(VX) * 0.8f; }
+            if (X + rad > wa.Right) { X = wa.Right - rad; VX = -Math.Abs(VX) * 0.8f; }
+            Grounded = false;
+            rot += VX * dt / rad;
         }
         else
         {

@@ -74,6 +74,8 @@ static class L
         ["opt.windows.sub"] = ("Приземляется на окна и запрыгивает на них", "Lands on window tops and jumps onto them"),
         ["opt.follow"] = ("Ходит за курсором", "Follows the cursor"),
         ["opt.follow.sub"] = ("Всё время идёт туда, где мышка", "Always walks toward the mouse"),
+        ["opt.zerog"] = ("Невесомость", "Zero gravity"),
+        ["opt.zerog.sub"] = ("Летает, танцует в воздухе и отскакивает от краёв экрана", "Floats, dances in the air and bounces off screen edges"),
         ["opt.sleep"] = ("Засыпает без дела", "Naps when bored"),
         ["opt.sleep.sub"] = ("Через 5 минут без вас и без печати", "After 5 minutes with no clicks or typing"),
 

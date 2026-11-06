@@ -243,6 +243,7 @@ class Settings
     public bool Follow { get; set; }
     public bool SleepWhenIdle { get; set; } = true;
     public bool HideInFullscreen { get; set; } = true;
+    public bool ZeroG { get; set; }
     public string Language { get; set; } = "auto";
     public bool FirstRunDone { get; set; }
     public long Keys { get; set; }

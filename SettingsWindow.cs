@@ -645,7 +645,8 @@ class SettingsWindow : UI.FluentWindow
 
         right.Children.Add(Card(L.T("card.screen"),
             Row(L.T("opt.windows"), Toggle(S.Windows, v => S.Windows = v), L.T("opt.windows.sub")),
-            Row(L.T("opt.follow"), Toggle(S.Follow, v => S.Follow = v), L.T("opt.follow.sub"))));
+            Row(L.T("opt.follow"), Toggle(S.Follow, v => S.Follow = v), L.T("opt.follow.sub")),
+            Row(L.T("opt.zerog"), Toggle(S.ZeroG, v => S.ZeroG = v), L.T("opt.zerog.sub"))));
 
         right.Children.Add(Card(L.T("card.fullscreen"),
             Row(L.T("opt.fsmode"), Combo(new[] { L.T("fs.hide"), L.T("fs.walk") }, S.HideInFullscreen ? 0 : 1, i => S.HideInFullscreen = i == 0, 190), L.T("opt.fsmode.sub"))));
