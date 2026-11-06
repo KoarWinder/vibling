@@ -29,6 +29,8 @@ static class L
         catch { return null; }
     }
 
+    public static bool Russian => ru;
+
     public static string T(string key) => Table.TryGetValue(key, out var v) ? (ru ? v.ru : v.en) : key;
 
     static readonly Dictionary<string, (string ru, string en)> Table = new()
@@ -75,6 +77,43 @@ static class L
         ["opt.follow"] = ("Ходит за курсором", "Follows the cursor"),
         ["opt.follow.sub"] = ("Всё время идёт туда, где мышка", "Always walks toward the mouse"),
         ["opt.zerog"] = ("Невесомость", "Zero gravity"),
+        ["nav.music"] = ("Музыка", "Music"),
+        ["nav.scripts"] = ("Сценарии", "Scripts"),
+        ["card.lofi"] = ("Лоу-фай", "Lo-fi"),
+        ["card.afk"] = ("Когда вас нет", "While you're away"),
+        ["card.dance"] = ("Танцы", "Dancing"),
+        ["music.play"] = ("Включить", "Play"),
+        ["music.stop"] = ("Выключить", "Stop"),
+        ["music.next"] = ("Следующий трек", "Next track"),
+        ["music.now"] = ("Сейчас играет", "Now playing"),
+        ["music.off"] = ("Музыка выключена", "Music is off"),
+        ["music.volume"] = ("Громкость", "Volume"),
+        ["music.afk"] = ("Лоу-фай, когда вас нет", "Lo-fi while you're away"),
+        ["music.afk.sub"] = ("Vibling танцует, пока вы отошли. Вернётесь — музыка затихнет", "Vibling dances while you're gone, the music fades out when you return"),
+        ["music.after"] = ("Через сколько", "After"),
+        ["minutes"] = ("{0} мин", "{0} min"),
+        ["music.dance"] = ("Танцует под вашу музыку", "Dances to your music"),
+        ["music.dance.sub"] = ("Слышит звук из колонок и пританцовывает в такт", "Hears your speakers and dances to the beat"),
+        ["menu.music"] = ("Лоу-фай", "Lo-fi music"),
+        ["scripts.hint"] = ("Собирайте поведение из блоков, как в Scratch: сверху событие, под ним действия по порядку.", "Build behavior from blocks like in Scratch: an event on top, actions below in order."),
+        ["scripts.new"] = ("Новый сценарий", "New script"),
+        ["scripts.examples"] = ("Добавить примеры", "Add examples"),
+        ["scripts.empty"] = ("Сценариев пока нет. Создайте новый или начните с примеров.", "No scripts yet. Create one or start with the examples."),
+        ["scripts.block"] = ("Блок", "Block"),
+        ["scripts.delete"] = ("Удалить", "Delete"),
+        ["scripts.up"] = ("Выше", "Up"),
+        ["scripts.down"] = ("Ниже", "Down"),
+        ["cat.motion"] = ("Движение", "Motion"),
+        ["cat.behavior"] = ("Поведение", "Behavior"),
+        ["cat.looks"] = ("Внешность", "Looks"),
+        ["cat.sound"] = ("Звук", "Sound"),
+        ["cat.control"] = ("Управление", "Control"),
+        ["emote.heart"] = ("сердечки", "hearts"),
+        ["emote.star"] = ("искры", "sparkles"),
+        ["emote.note"] = ("ноту ♪", "a note ♪"),
+        ["emote.!"] = ("«!»", "\"!\""),
+        ["emote.?"] = ("«?»", "\"?\""),
+        ["emote.zzz"] = ("«zZ»", "\"zZ\""),
         ["opt.zerog.sub"] = ("Летает, танцует в воздухе и отскакивает от краёв экрана", "Floats, dances in the air and bounces off screen edges"),
         ["opt.sleep"] = ("Засыпает без дела", "Naps when bored"),
         ["opt.sleep.sub"] = ("Через 5 минут без вас и без печати", "After 5 minutes with no clicks or typing"),

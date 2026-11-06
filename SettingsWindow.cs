@@ -149,8 +149,8 @@ class SettingsWindow : UI.FluentWindow
         root.Children.Add(body);
 
         var side = new WC.DockPanel { Margin = new W.Thickness(16, 0, 12, 16), LastChildFill = false };
-        string[] pages = { "nav.look", "nav.behavior", "nav.system", "nav.about" };
-        UI.SymbolRegular[] icons = { UI.SymbolRegular.PaintBrush24, UI.SymbolRegular.AnimalCat24, UI.SymbolRegular.Settings24, UI.SymbolRegular.Info24 };
+        string[] pages = { "nav.look", "nav.behavior", "nav.music", "nav.scripts", "nav.system", "nav.about" };
+        UI.SymbolRegular[] icons = { UI.SymbolRegular.PaintBrush24, UI.SymbolRegular.AnimalCat24, UI.SymbolRegular.MusicNote224, UI.SymbolRegular.PuzzlePiece24, UI.SymbolRegular.Settings24, UI.SymbolRegular.Info24 };
         for (int i = 0; i < pages.Length; i++)
         {
             int idx = i;
@@ -296,7 +296,7 @@ class SettingsWindow : UI.FluentWindow
             nav[n].bar.Background = AccentB;
         }
 
-        string[] titles = { "nav.look", "nav.behavior", "nav.system", "nav.about" };
+        string[] titles = { "nav.look", "nav.behavior", "nav.music", "nav.scripts", "nav.system", "nav.about" };
         var stack = new WC.StackPanel();
         stack.Children.Add(new WC.TextBlock { Text = L.T(titles[i]), FontSize = 28, FontWeight = W.FontWeights.SemiBold, Foreground = Fg, Margin = new W.Thickness(0, 0, 0, 20) });
 
@@ -315,7 +315,9 @@ class SettingsWindow : UI.FluentWindow
         {
             case 0: PageLook(left, right); break;
             case 1: PageBehavior(left, right); break;
-            case 2: PageSystem(left, right); break;
+            case 2: PageMusic(left, right); break;
+            case 3: PageScripts(left, right); break;
+            case 4: PageSystem(left, right); break;
             default: PageAbout(left, right); break;
         }
         page.Content = stack;
@@ -699,6 +701,242 @@ class SettingsWindow : UI.FluentWindow
             hideBtn.Content = L.T(pet.IsHidden ? "show" : "hide");
         };
         onTick();
+    }
+
+    // ---------- музыка ----------
+
+    void PageMusic(WC.StackPanel left, WC.StackPanel right)
+    {
+        var now = new WC.TextBlock { FontSize = 13, Foreground = Muted, TextWrapping = W.TextWrapping.Wrap, Margin = new W.Thickness(0, 10, 0, 6) };
+        var play = new UI.Button { Appearance = UI.ControlAppearance.Primary, Padding = new W.Thickness(18, 7, 18, 7), Margin = new W.Thickness(0, 0, 8, 0), MinWidth = 110 };
+        var next = new UI.Button { Content = L.T("music.next"), Padding = new W.Thickness(16, 7, 16, 7), Icon = new UI.SymbolIcon { Symbol = UI.SymbolRegular.Next24 } };
+        void Update()
+        {
+            var t = pet.Music.Synth?.Track;
+            play.Content = L.T(pet.Music.On ? "music.stop" : "music.play");
+            play.Icon = new UI.SymbolIcon { Symbol = pet.Music.On ? UI.SymbolRegular.MusicNoteOff224 : UI.SymbolRegular.Play24 };
+            now.Text = pet.Music.On && t != null ? $"{L.T("music.now")}: {t.Name} · {t.Key} {t.Mode} · {t.Bpm} BPM · {t.Style}" : L.T("music.off");
+        }
+        play.Click += (_, _) => { pet.ToggleMusic(); Update(); };
+        next.Click += (_, _) => { pet.NextTrack(); Update(); };
+        var buttons = new WC.StackPanel { Orientation = WC.Orientation.Horizontal };
+        buttons.Children.Add(play);
+        buttons.Children.Add(next);
+        var vol = new WC.Slider { Minimum = 0, Maximum = 1, Width = 200, Value = S.MusicVolume };
+        vol.ValueChanged += (_, _) => { S.MusicVolume = (float)vol.Value; pet.Music.SetVolume(S.MusicVolume); };
+        vol.LostMouseCapture += (_, _) => S.Save();
+        left.Children.Add(Card(L.T("card.lofi"), buttons, now, Row(L.T("music.volume"), vol)));
+
+        int[] mins = { 1, 2, 3, 5, 10, 15, 30 };
+        left.Children.Add(Card(L.T("card.afk"),
+            Row(L.T("music.afk"), Toggle(S.AfkMusic, v => S.AfkMusic = v), L.T("music.afk.sub")),
+            Row(L.T("music.after"), Combo(mins.Select(m => string.Format(L.T("minutes"), m)).ToArray(), Array.IndexOf(mins, S.AfkMinutes), i => S.AfkMinutes = mins[i], 150))));
+
+        right.Children.Add(Card(L.T("card.dance"),
+            Row(L.T("music.dance"), Toggle(S.DanceToMusic, v => S.DanceToMusic = v), L.T("music.dance.sub"))));
+
+        onTick = Update;
+        Update();
+    }
+
+    // ---------- сценарии в стиле Scratch ----------
+
+    WC.StackPanel scriptsBox;
+
+    static WM.SolidColorBrush CatBrush(string cat) => cat switch
+    {
+        "event" => Fluent.Brush(0xE6, 0xA8, 0x00),
+        "motion" => Fluent.Brush(0x4C, 0x97, 0xFF),
+        "behavior" => Fluent.Brush(0x3F, 0xA8, 0x5A),
+        "looks" => Fluent.Brush(0x99, 0x66, 0xFF),
+        "sound" => Fluent.Brush(0xCF, 0x63, 0xCF),
+        _ => Fluent.Brush(0xF0, 0x8C, 0x1A),
+    };
+
+    void PageScripts(WC.StackPanel left, WC.StackPanel right)
+    {
+        WC.Grid.SetColumnSpan(left, 3);
+        left.Children.Add(new WC.TextBlock { Text = L.T("scripts.hint"), Foreground = Muted, FontSize = 13, TextWrapping = W.TextWrapping.Wrap, Margin = new W.Thickness(0, 0, 0, 14) });
+        scriptsBox = new WC.StackPanel();
+        left.Children.Add(scriptsBox);
+
+        var add = new UI.Button { Content = L.T("scripts.new"), Appearance = UI.ControlAppearance.Primary, Icon = new UI.SymbolIcon { Symbol = UI.SymbolRegular.Add24 }, Padding = new W.Thickness(16, 7, 16, 7), Margin = new W.Thickness(0, 0, 8, 0) };
+        add.Click += (_, _) => { S.Scripts.Add(new PetScript { When = Blocks.New(Blocks.Events[1]) }); S.Save(); RebuildScripts(); };
+        var examples = new UI.Button { Content = L.T("scripts.examples"), Padding = new W.Thickness(16, 7, 16, 7) };
+        examples.Click += (_, _) => { S.Scripts.AddRange(Blocks.Templates()); S.Save(); RebuildScripts(); };
+        var row = new WC.StackPanel { Orientation = WC.Orientation.Horizontal, Margin = new W.Thickness(0, 4, 0, 16) };
+        row.Children.Add(add);
+        row.Children.Add(examples);
+        left.Children.Add(row);
+        RebuildScripts();
+    }
+
+    void RebuildScripts()
+    {
+        double offset = scroll.VerticalOffset;
+        scriptsBox.Children.Clear();
+        if (S.Scripts.Count == 0)
+            scriptsBox.Children.Add(Card(L.T("nav.scripts"), new WC.TextBlock { Text = L.T("scripts.empty"), Foreground = Muted, FontSize = 14, TextWrapping = W.TextWrapping.Wrap }));
+        foreach (var sc in S.Scripts.ToList()) scriptsBox.Children.Add(ScriptCard(sc));
+        Dispatcher.BeginInvoke(() => scroll.ScrollToVerticalOffset(offset), WT.DispatcherPriority.Loaded);
+    }
+
+    UI.Button IconButton(UI.SymbolRegular symbol, string tip, Action act)
+    {
+        var b = new UI.Button { Icon = new UI.SymbolIcon { Symbol = symbol, FontSize = 14 }, Padding = new W.Thickness(6), Margin = new W.Thickness(2, 0, 0, 0), ToolTip = tip, Appearance = UI.ControlAppearance.Transparent, Foreground = WM.Brushes.White };
+        b.Click += (_, _) => act();
+        return b;
+    }
+
+    W.UIElement ScriptCard(PetScript sc)
+    {
+        var stack = new WC.StackPanel();
+        var head = new WC.Grid { Margin = new W.Thickness(0, 0, 0, 10) };
+        head.ColumnDefinitions.Add(new WC.ColumnDefinition { Width = new W.GridLength(1, W.GridUnitType.Star) });
+        head.ColumnDefinitions.Add(new WC.ColumnDefinition { Width = W.GridLength.Auto });
+        head.Children.Add(Toggle(sc.On, v => sc.On = v));
+        var del = IconButton(UI.SymbolRegular.Delete24, L.T("scripts.delete"), () => { S.Scripts.Remove(sc); S.Save(); RebuildScripts(); });
+        del.Foreground = Muted;
+        WC.Grid.SetColumn(del, 1);
+        head.Children.Add(del);
+        stack.Children.Add(head);
+
+        stack.Children.Add(BlockView(sc, sc.When, -1));
+        for (int i = 0; i < sc.Do.Count; i++) stack.Children.Add(BlockView(sc, sc.Do[i], i));
+
+        var addBlock = new UI.Button { Content = L.T("scripts.block"), Icon = new UI.SymbolIcon { Symbol = UI.SymbolRegular.Add24 }, Padding = new W.Thickness(12, 5, 12, 5), Margin = new W.Thickness(24, 6, 0, 0) };
+        addBlock.Click += (_, _) => AddBlockMenu(addBlock, sc);
+        stack.Children.Add(addBlock);
+
+        return new WC.Border
+        {
+            Background = CardB, BorderBrush = CardStroke, BorderThickness = new W.Thickness(1), CornerRadius = new W.CornerRadius(8),
+            Padding = new W.Thickness(16, 12, 16, 14), Margin = new W.Thickness(0, 0, 0, 12), Child = stack,
+            Opacity = sc.On ? 1 : 0.55,
+        };
+    }
+
+    W.UIElement BlockView(PetScript sc, ScriptBlock b, int index)
+    {
+        bool hat = index < 0;
+        var def = Blocks.Def(b.Id) ?? (hat ? Blocks.Events[0] : Blocks.Actions[0]);
+        var line = new WC.WrapPanel { VerticalAlignment = W.VerticalAlignment.Center };
+        WC.TextBlock Label(string t) => new() { Text = t, Foreground = WM.Brushes.White, FontSize = 14, FontWeight = W.FontWeights.SemiBold, VerticalAlignment = W.VerticalAlignment.Center, Margin = new W.Thickness(0, 0, 6, 0) };
+
+        if (hat)
+        {
+            var names = Blocks.Events.Select(e => e.Text.Replace("{0}", "N")).ToArray();
+            var pickEvent = Combo(names, Array.FindIndex(Blocks.Events, e => e.Id == b.Id), i =>
+            {
+                var nb = Blocks.New(Blocks.Events[i]);
+                sc.When = nb;
+                Dispatcher.BeginInvoke(RebuildScripts);
+            }, 280);
+            line.Children.Add(pickEvent);
+            if (def.Arg != ArgKind.None) { line.Children.Add(Label("N =")); line.Children.Add(ArgEditor(b, def)); }
+        }
+        else
+        {
+            var parts = def.Text.Split("{0}");
+            line.Children.Add(Label(parts[0].Trim()));
+            if (def.Arg != ArgKind.None) line.Children.Add(ArgEditor(b, def));
+            if (parts.Length > 1 && parts[1].Trim().Length > 0) line.Children.Add(Label(parts[1].Trim()));
+        }
+
+        var grid = new WC.Grid();
+        grid.ColumnDefinitions.Add(new WC.ColumnDefinition { Width = new W.GridLength(1, W.GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new WC.ColumnDefinition { Width = W.GridLength.Auto });
+        grid.Children.Add(line);
+        if (!hat)
+        {
+            var tools = new WC.StackPanel { Orientation = WC.Orientation.Horizontal, VerticalAlignment = W.VerticalAlignment.Center };
+            void Move(int d)
+            {
+                int j = index + d;
+                if (j < 0 || j >= sc.Do.Count) return;
+                (sc.Do[index], sc.Do[j]) = (sc.Do[j], sc.Do[index]);
+                S.Save();
+                RebuildScripts();
+            }
+            tools.Children.Add(IconButton(UI.SymbolRegular.ArrowUp24, L.T("scripts.up"), () => Move(-1)));
+            tools.Children.Add(IconButton(UI.SymbolRegular.ArrowDown24, L.T("scripts.down"), () => Move(1)));
+            tools.Children.Add(IconButton(UI.SymbolRegular.Dismiss24, L.T("scripts.delete"), () => { sc.Do.RemoveAt(index); S.Save(); RebuildScripts(); }));
+            WC.Grid.SetColumn(tools, 1);
+            grid.Children.Add(tools);
+        }
+
+        var color = CatBrush(def.Cat);
+        return new WC.Border
+        {
+            Background = color,
+            BorderBrush = new WM.SolidColorBrush(WM.Color.FromArgb(70, 0, 0, 0)),
+            BorderThickness = new W.Thickness(1),
+            CornerRadius = hat ? new W.CornerRadius(16, 16, 6, 6) : new W.CornerRadius(6),
+            Padding = new W.Thickness(12, 6, 6, 6),
+            Margin = hat ? new W.Thickness(0, 0, 0, 4) : new W.Thickness(24, 0, 0, 4),
+            MinHeight = 40,
+            Child = grid,
+        };
+    }
+
+    W.FrameworkElement ArgEditor(ScriptBlock b, BlockDef d)
+    {
+        switch (d.Arg)
+        {
+            case ArgKind.Number:
+            {
+                var tb = new WC.TextBox { Text = b.Num.ToString("0.##"), Width = 70, VerticalAlignment = W.VerticalAlignment.Center, Margin = new W.Thickness(0, 0, 6, 0) };
+                tb.TextChanged += (_, _) =>
+                {
+                    if (double.TryParse(tb.Text.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v))
+                    { b.Num = v; S.Save(); }
+                };
+                return tb;
+            }
+            case ArgKind.Time:
+            {
+                var tb = new WC.TextBox { Text = b.Str ?? "23:00", Width = 80, VerticalAlignment = W.VerticalAlignment.Center, Margin = new W.Thickness(0, 0, 6, 0) };
+                tb.TextChanged += (_, _) => { if (TimeSpan.TryParse(tb.Text, out _)) { b.Str = tb.Text.Trim(); S.Save(); } };
+                return tb;
+            }
+            case ArgKind.Skin:
+            {
+                var ids = Looks.Skins.Select(k => k.Id).Append("custom").ToArray();
+                return Combo(ids.Select(id => Looks.SkinById(id).Name).ToArray(), Array.IndexOf(ids, b.Str), i => b.Str = ids[i], 170);
+            }
+            case ArgKind.Accessory:
+            {
+                var ids = Looks.Accessories.Where(a => a.Id != "none").Select(a => a.Id).ToArray();
+                return Combo(ids.Select(id => L.T("acc." + id)).ToArray(), Array.IndexOf(ids, b.Str), i => b.Str = ids[i], 170);
+            }
+            default:
+            {
+                var ids = Blocks.Emotes;
+                return Combo(ids.Select(id => L.T("emote." + id)).ToArray(), Array.IndexOf(ids, b.Str), i => b.Str = ids[i], 150);
+            }
+        }
+    }
+
+    void AddBlockMenu(W.FrameworkElement target, PetScript sc)
+    {
+        var menu = new WC.ContextMenu { PlacementTarget = target, Placement = WC.Primitives.PlacementMode.Bottom };
+        foreach (var cat in Blocks.Categories)
+        {
+            var group = new WC.MenuItem
+            {
+                Header = L.T("cat." + cat),
+                Icon = new System.Windows.Shapes.Ellipse { Width = 10, Height = 10, Fill = CatBrush(cat) },
+            };
+            foreach (var d in Blocks.Actions.Where(a => a.Cat == cat))
+            {
+                var item = new WC.MenuItem { Header = d.Text.Replace("{0}", "…") };
+                var def = d;
+                item.Click += (_, _) => { sc.Do.Add(Blocks.New(def)); S.Save(); RebuildScripts(); };
+                group.Items.Add(item);
+            }
+            menu.Items.Add(group);
+        }
+        menu.IsOpen = true;
     }
 
     void PageAbout(WC.StackPanel left, WC.StackPanel right)
