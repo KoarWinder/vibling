@@ -46,7 +46,7 @@ class PetForm : LayeredForm
     float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
     float lastInteract, lastKeyT = -999;
     int face = 1, paw;
-    float bonkT, fHappyT, fEatT, fFlipT, fDizzyT, hicT, squintT, fxT, faT, faDur, curSpeed;
+    float aspin, bonkT, fHappyT, fEatT, fDizzyT, hicT, squintT, fxT, faT, faDur, curSpeed;
     FA fa;
     int faDir = 1;
     PointF faPt;
@@ -118,7 +118,7 @@ class PetForm : LayeredForm
     public void ApplySize()
     {
         P = S.Pixel;
-        LW = 36 * P; LH = 30 * P; FX = 18 * P; FY = 27 * P;
+        LW = 36 * P; LH = 40 * P; FX = 18 * P; FY = 27 * P;
         bmp?.Dispose();
         bmp = new Bitmap((int)Math.Ceiling(LW * U), (int)Math.Ceiling(LH * U), PixelFormat.Format32bppArgb);
     }
@@ -370,7 +370,7 @@ class PetForm : LayeredForm
     public void Flip()
     {
         lastInteract = time;
-        if (st == St.Float) { S.Flips++; fFlipT = 0.7f; return; }
+        if (st == St.Float) { S.Flips++; aspin += -face * 520; fHappyT = 1f; return; }
         if (!Grounded || Busy) return;
         S.Flips++;
         StartAir(AirKind.Flip, 0, -780 * U);
@@ -728,6 +728,7 @@ class PetForm : LayeredForm
         umbrellaOpen = false;
         vx = vx0;
         vy = vx0 == 0 && vy0 == 0 ? -120 * U : vy0;
+        aspin = Math.Clamp(vx0 / U * 0.25f, -500, 500) + Rand(-40, 40);
         StartAct(FA.Hover, WA);
     }
 
@@ -741,6 +742,7 @@ class PetForm : LayeredForm
         fxT = 0;
         hicT = 0.3f;
         faDir = rnd.Next(2) == 0 ? -1 : 1;
+        if (a is not (FA.Hover or FA.Nap) && rnd.NextDouble() < 0.4) aspin += Rand(-100, 100);
         faDur = a switch
         {
             FA.Hover => Rand(2, 5), FA.Confused => 2.6f, FA.Dance => Rand(3, 5), FA.Swim => Rand(3, 5),
@@ -797,6 +799,7 @@ class PetForm : LayeredForm
             StartAct(FA.Startled, wa);
             vx -= cdx / cd * 500 * U;
             vy -= cdy / cd * 500 * U;
+            aspin += Rand(-220, 220);
             Mark("!", Color.FromArgb(255, 220, 90));
         }
         bool hasBall = ball != null && !ball.IsDisposed;
@@ -811,8 +814,8 @@ class PetForm : LayeredForm
             PickAct(wa);
         }
 
-        float ax = 0, ay = MathF.Sin(time * 1.7f) * 18 * U, damping = 0.45f, angleTarget = 0;
-        bool spinning = false, faceByMotion = true;
+        float ax = 0, ay = MathF.Sin(time * 1.7f) * 18 * U, damping = 0.45f;
+        bool faceByMotion = true;
         void Toward(PointF t, float force)
         {
             float dx = t.X - x, dy = t.Y - y, d = Math.Max(1, MathF.Sqrt(dx * dx + dy * dy));
@@ -824,7 +827,6 @@ class PetForm : LayeredForm
         {
             damping = 1.2f;
             ay = MathF.Sin(time) * 8 * U;
-            angleTarget = -face * 15;
             faceByMotion = false;
         }
         else switch (fa)
@@ -835,17 +837,17 @@ class PetForm : LayeredForm
                 faceByMotion = false;
                 face = (int)(faT / 0.55f) % 2 == 0 ? 1 : -1;
                 break;
-            case FA.Dance: damping = 1.2f; angleTarget = MathF.Sin(time * 4.5f) * 8; break;
-            case FA.Swim: ax += face * 110 * U; damping = 0.9f; angleTarget = face * 8; break;
-            case FA.SlowSpin: spinning = true; angle += faDir * 120 * dt; damping = 1.5f; break;
+            case FA.Dance: damping = 1.2f; break;
+            case FA.Swim: ax += face * 110 * U; damping = 0.9f; break;
+            case FA.SlowSpin: damping = 1.5f; break;
             case FA.Stretch:
                 damping = 2f;
                 tsy = 1 + 0.15f * MathF.Sin(Math.Clamp(faT / faDur, 0, 1) * MathF.PI);
                 tsx = 2 - tsy;
                 break;
             case FA.Sit: damping = 2f; FaceCursor(); break;
-            case FA.LieBack: damping = 1.5f; angleTarget = -face * 90; faceByMotion = false; break;
-            case FA.UpsideDown: damping = 1.5f; angleTarget = 180; FaceCursor(); break;
+            case FA.LieBack: damping = 1.5f; faceByMotion = false; break;
+            case FA.UpsideDown: damping = 1.5f; FaceCursor(); break;
             case FA.Wave: damping = 2f; FaceCursor(); break;
             case FA.ToCursor: Toward(new PointF(cur.X, cur.Y + 20 * Px), 220 * U); FaceCursor(); break;
             case FA.Dash:
@@ -857,9 +859,9 @@ class PetForm : LayeredForm
                         float a = Rand(0, MathF.PI * 2);
                         vx = MathF.Cos(a) * 900 * U;
                         vy = MathF.Sin(a) * 600 * U;
+                        aspin += Rand(-300, 300);
                     }
                     damping = 0.3f;
-                    angleTarget = face * 12;
                 }
                 break;
             case FA.WallPlay: Toward(faPt, 260 * U); break;
@@ -898,7 +900,6 @@ class PetForm : LayeredForm
             case FA.Zoomies:
                 Toward(new PointF(faPt.X + MathF.Cos(faT * 4) * 110 * U, faPt.Y + MathF.Sin(faT * 4) * 70 * U), 600 * U);
                 damping = 1.2f;
-                angleTarget = face * 10;
                 break;
             case FA.Orbit:
                 Toward(new PointF(cur.X + MathF.Cos(faT * 2.2f) * 130 * U, cur.Y + MathF.Sin(faT * 2.2f) * 90 * U), 400 * U);
@@ -912,7 +913,6 @@ class PetForm : LayeredForm
             case FA.Superhero:
                 Toward(faPt, 500 * U);
                 damping = 0.8f;
-                angleTarget = face * 12;
                 if (Math.Abs(faPt.X - x) < 30 * U) faT = faDur;
                 break;
             case FA.Startled: damping = 3f; faceByMotion = false; break;
@@ -938,6 +938,7 @@ class PetForm : LayeredForm
         if (hit > 90 * U && bonkT <= 0.1f)
         {
             bonkT = Math.Min(0.8f, 0.3f + hit / (3000 * U));
+            aspin += (rnd.Next(2) == 0 ? -1 : 1) * Math.Min(320, hit / U * 0.25f);
             if (fa == FA.WallPlay)
             {
                 fHappyT = 0.6f;
@@ -964,16 +965,10 @@ class PetForm : LayeredForm
         fEatT -= dt;
         fDizzyT -= dt;
         squintT -= dt;
-        if (fFlipT > 0)
-        {
-            fFlipT -= dt;
-            angle = fFlipT > 0 ? -face * 360 * (1 - fFlipT / 0.7f) : 0;
-        }
-        else if (!spinning)
-        {
-            float d = ((angleTarget - angle) % 360 + 540) % 360 - 180;
-            angle += d * Math.Min(1, dt * 5);
-        }
+        if (fa == FA.SlowSpin) aspin += (faDir * 140 - aspin) * Math.Min(1, dt * 1.5f);
+        if (fa == FA.Hover && !fSleep) aspin *= MathF.Exp(-1.1f * dt);
+        aspin *= MathF.Exp(-0.06f * dt);
+        angle = (angle + aspin * dt) % 360;
 
         if (S.SleepWhenIdle && !fSleep && time - lastInteract > 300 && time - lastKeyT > 300) fSleep = true;
         if (fSleep || fa == FA.Nap)
@@ -1240,10 +1235,11 @@ class PetForm : LayeredForm
                     pose.LookX = 0; pose.LookY = 1;
                 }
                 else if (fEatT > 0 || fa == FA.Snack) { pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; }
-                else if (fHappyT > 0 || fFlipT > 0) { pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Legs = Legs.Tuck; }
+                else if (fHappyT > 0) { pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Legs = Legs.Tuck; }
                 else if (fDizzyT > 0) { pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.O; }
                 else switch (fa)
                 {
+                    case FA.Hover: if (Math.Abs(aspin) > 25) { pose.Arms = Arms.Out; pose.Mouth = Mouth.O; } break;
                     case FA.Confused: pose.Mouth = Mouth.O; pose.LookX = 1; pose.Eyes = blinkT < 0 ? Eyes.Blink : Eyes.Open; break;
                     case FA.Dance:
                         pose.Arms = ((int)(time * 2.5f) % 4) switch { 0 => Arms.Up, 1 => Arms.Wave, 2 => Arms.Up, _ => Arms.Swing };
