@@ -57,9 +57,9 @@ static class Looks
     public static IEnumerable<string> Ordered(IEnumerable<string> wear) => DrawOrder.Where(wear.Contains);
 }
 
-enum Legs { Stand, Walk, Run, Dangle, Tuck, Brace, Hidden }
+enum Legs { Stand, Walk, Run, Dangle, Tuck, Brace, Skid, Hidden }
 enum Arms { Side, Swing, Up, Flail, Wave, Typing, Out, Umbrella }
-enum Eyes { Open, Blink, Happy, Closed, Dizzy, Wide, Squint }
+enum Eyes { Open, Blink, Happy, Closed, Wide, Squint }
 enum Mouth { None, Smile, O, Open, Chew, Yawn }
 
 class Pose
@@ -128,7 +128,13 @@ static class Sprite
         Rect(3, 3 + by, 14, 9 + by, s.Body);
         Rect(3, 9 + by, 14, 9 + by, s.Shade);
 
-        if (!p.Sit && p.Legs != Legs.Hidden)
+        if (!p.Sit && p.Legs == Legs.Skid)
+        {
+            Rect(4, 10, 4, 11, s.Shade); Rect(6, 10, 6, 11, s.Shade);
+            Cell(12, 10, s.Shade); Cell(13, 11, s.Shade);
+            Cell(14, 10, s.Shade); Cell(15, 11, s.Shade);
+        }
+        else if (!p.Sit && p.Legs != Legs.Hidden)
         {
             int[] cols = p.Legs == Legs.Brace ? new[] { 3, 5, 12, 14 } : new[] { 4, 6, 11, 13 };
             for (int i = 0; i < 4; i++)
@@ -203,13 +209,6 @@ static class Sprite
                 break;
             case Eyes.Closed:
                 Rect(5, 6 + by, 6, 6 + by, s.Eye); Rect(11, 6 + by, 12, 6 + by, s.Eye);
-                break;
-            case Eyes.Dizzy:
-                foreach (int ex in new[] { 6, 11 })
-                {
-                    Cell(ex - 1, 4 + by, s.Eye); Cell(ex + 1, 4 + by, s.Eye); Cell(ex, 5 + by, s.Eye);
-                    Cell(ex - 1, 6 + by, s.Eye); Cell(ex + 1, 6 + by, s.Eye);
-                }
                 break;
             case Eyes.Wide:
                 Rect(6 + lc, 4 + by, 6 + lc, 5 + by, s.Eye); Rect(11 + lc, 4 + by, 11 + lc, 5 + by, s.Eye);

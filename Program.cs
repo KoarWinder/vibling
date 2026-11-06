@@ -65,6 +65,15 @@ static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint Size, Time; }
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+
+    public static double IdleSeconds()
+    {
+        var i = new LASTINPUTINFO { Size = 8 };
+        return GetLastInputInfo(ref i) ? unchecked((uint)Environment.TickCount - i.Time) / 1000.0 : 0;
+    }
     [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleDC(IntPtr hDC);
     [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr hdc);
     [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
@@ -243,6 +252,12 @@ class Settings
     public bool Follow { get; set; }
     public bool SleepWhenIdle { get; set; } = true;
     public bool HideInFullscreen { get; set; } = true;
+    public bool ZeroG { get; set; }
+    public bool AfkMusic { get; set; } = true;
+    public int AfkMinutes { get; set; } = 3;
+    public float MusicVolume { get; set; } = 0.5f;
+    public bool DanceToMusic { get; set; } = true;
+    public List<PetScript> Scripts { get; set; } = new();
     public string Language { get; set; } = "auto";
     public bool FirstRunDone { get; set; }
     public long Keys { get; set; }
@@ -264,6 +279,7 @@ class Settings
     {
         var s = LoadRaw();
         s.Wear ??= new();
+        s.Scripts ??= new();
         if (!string.IsNullOrEmpty(s.Accessory) && s.Accessory != "none" && !s.Wear.Contains(s.Accessory)) s.Wear.Add(s.Accessory);
         s.Accessory = null;
         s.ApplyCustom();
