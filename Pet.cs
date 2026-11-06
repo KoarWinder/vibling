@@ -148,7 +148,7 @@ class PetForm : LayeredForm
         }
         PopupMenu.Entry Item(string key, Action act, bool check = false) => new() { Text = L.T(key), Act = act, Check = check };
         var sep = new PopupMenu.Entry { Separator = true };
-        PopupMenu.Open(new List<PopupMenu.Entry>
+        var items = new List<PopupMenu.Entry>
         {
             new() { Text = L.T("app"), Header = true, Icon = icon },
             sep,
@@ -158,7 +158,6 @@ class PetForm : LayeredForm
             Item("flip.menu", Flip),
             Item("opt.zerog", () => S.ZeroG = !S.ZeroG, S.ZeroG),
             Item("menu.music", ToggleMusic, music.On),
-            Item("music.next", NextTrack),
             Item(st == St.Sleep ? "wake" : "sleep", () =>
             {
                 if (st == St.Float) fSleep = !fSleep;
@@ -170,7 +169,9 @@ class PetForm : LayeredForm
             Item(hidden ? "show" : "hide", () => SetHidden(!hidden)),
             sep,
             Item("quit", Quit),
-        }, at, U);
+        };
+        if (music.On) items.Insert(items.FindIndex(e => e.Text == L.T("menu.music")) + 1, Item("music.next", NextTrack));
+        PopupMenu.Open(items, at, U);
     }
 
     public void ShowSettings()
