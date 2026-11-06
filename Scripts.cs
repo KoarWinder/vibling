@@ -71,6 +71,7 @@ static class Blocks
         new("nexttrack", "sound", ArgKind.None, 0, "Следующий трек", "Next track"),
 
         new("peek", "behavior", ArgKind.None, 0, "Спрятаться и выглянуть", "Hide and peek"),
+        new("fart", "behavior", ArgKind.None, 0, "Пукнуть", "Fart"),
 
         new("wait", "control", ArgKind.Number, 1, "Подождать {0} сек", "Wait {0} s"),
         new("repeat", "control", ArgKind.Number, 3, "Повторить {0} раз", "Repeat {0} times"),

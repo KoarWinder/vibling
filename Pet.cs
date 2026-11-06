@@ -14,7 +14,7 @@ class Particle
     public Color C;
 }
 
-enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn, Float, Party, Peek, PeekSide }
+enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn, Float, Party, Peek, PeekSide, Fart }
 enum AirKind { Drop, Jump, Flip }
 
 class PetForm : LayeredForm
@@ -47,6 +47,8 @@ class PetForm : LayeredForm
     float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
     float lastInteract, lastKeyT = -999;
     int face = 1, paw;
+    float fFartT;
+    bool farted;
     float aspin, bonkT, fHappyT, fEatT, fDizzyT, hicT, squintT, fxT, faT, faDur, curSpeed;
     FA fa;
     int faDir = 1;
@@ -365,7 +367,7 @@ class PetForm : LayeredForm
     }
 
     bool Grounded => st is not (St.Drag or St.Air or St.Float);
-    bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter or St.Peek or St.PeekSide;
+    bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter or St.Peek or St.PeekSide or St.Fart;
 
     void Set(St s, float dur = 0) { if (s != St.Stretch) waking = false; st = s; stT = 0; stDur = dur; }
     float Rand(float a, float b) => a + (float)rnd.NextDouble() * (b - a);
@@ -419,7 +421,7 @@ class PetForm : LayeredForm
     public void ToggleBall()
     {
         if (ball != null) { ball.Close(); ball = null; return; }
-        ball = new BallForm(U, x + face * 15 * Px, y - 22 * Px);
+        ball = new BallForm(U, Px, x + face * 15 * Px, y - 22 * Px);
         ball.VX = face * 300 * U;
         ball.Removed += () => ball = null;
         ball.Thrown += () => { if (Grounded && !Busy && st != St.Sleep) Set(St.Run); };
@@ -526,6 +528,7 @@ class PetForm : LayeredForm
             (1.5f / act, () => Set(St.Idle, Rand(2, 5))),
             (0.8f * act, () => { targetX = Math.Clamp(cur.X, L, R); speed = 130 * U; goOff = false; Set(St.Walk); }),
             (0.25f * act, Flip),
+            (0.18f, Fart),
             (0.5f * act, HideAndPeek),
         };
         float sum = options.Sum(o => o.w), pick = Rand(0, sum);
@@ -633,6 +636,13 @@ class PetForm : LayeredForm
 
             case St.Peek:
                 (tsx, tsy) = StepPeek(dt);
+                break;
+
+            case St.Fart:
+                if (stT < 0.15f) { tsx = 1.12f; tsy = 0.88f; }
+                else if (stT > 1.1f) { tsx = 1.04f; tsy = 0.95f; } // смущённо сжался
+                if (!farted && stT > 0.6f) { farted = true; Sweat(); }
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
                 break;
 
             case St.PeekSide:
@@ -923,6 +933,7 @@ class PetForm : LayeredForm
             case "musicon": if (!music.On) StartMusic(); break;
             case "musicoff": music.Stop(); afkMusic = false; break;
             case "nexttrack": NextTrack(); break;
+            case "fart": Fart(); break;
             case "peek": if (!fl && Grounded && !Busy) HideAndPeek(); break;
         }
     }
@@ -995,6 +1006,38 @@ class PetForm : LayeredForm
         face = -peekDir;
     }
 
+    /// Случайно пукнул и застеснялся. В невесомости ещё и улетает от облачка.
+    void Fart()
+    {
+        if (hidden) return;
+        if (st == St.Float)
+        {
+            Puff();
+            vx += face * 140 * U;
+            aspin += face * Rand(120, 260);
+            fFartT = 2.4f;
+            Sweat();
+            return;
+        }
+        if (!Grounded || Busy || st == St.Sleep) return;
+        farted = false;
+        Set(St.Fart, 3.4f);
+        Puff();
+    }
+
+    void Puff()
+    {
+        for (int i = 0; i < 7; i++)
+            parts.Add(new Particle
+            {
+                Kind = 7, X = FX - face * Rand(5, 8) * P, Y = FY - Rand(1, 4) * P,
+                VX = -face * Rand(1.5f, 4) * P, VY = Rand(-3, -0.5f) * P, Life = Rand(1.1f, 1.7f), Max = 1.7f,
+                Size = Rand(1.2f, 2.2f) * P, C = i % 3 == 0 ? Color.FromArgb(200, 214, 150) : Color.FromArgb(168, 196, 120),
+            });
+    }
+
+    void Sweat() => parts.Add(new Particle { Kind = 8, X = FX + face * 5 * P, Y = FY - 12 * P, VX = face * 0.5f * P, VY = 1.5f * P, Life = 1.4f, Max = 1.4f, C = Color.FromArgb(140, 200, 255) });
+
     bool Check(string cond)
     {
         bool night = DateTime.Now.Hour >= 22 || DateTime.Now.Hour < 6;
@@ -1060,6 +1103,7 @@ class PetForm : LayeredForm
 
     void PickAct(Rectangle wa)
     {
+        if (rnd.NextDouble() < 0.06) Fart();
         float m = new[] { 0.55f, 1f, 1.6f }[Math.Clamp(S.Mood, 0, 2)];
         var options = new (FA a, float w)[]
         {
@@ -1258,6 +1302,7 @@ class PetForm : LayeredForm
 
         bonkT -= dt;
         fHappyT -= dt;
+        fFartT -= dt;
         fEatT -= dt;
         fDizzyT -= dt;
         squintT -= dt;
@@ -1527,6 +1572,19 @@ class PetForm : LayeredForm
                 pose.Legs = Legs.Run; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile;
                 break;
             case St.Wave: pose.Arms = Arms.Wave; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; break;
+            case St.Fart:
+                if (stT < 0.15f) pose.Eyes = Eyes.Squint;
+                else if (stT < 0.7f) { pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; }
+                else if (stT < 1.2f) { pose.Eyes = Eyes.Wide; pose.LookX = -1; }       // оглянулся на облачко
+                else
+                {
+                    pose.Blush = true;
+                    pose.LookY = 1;
+                    pose.LookX = (int)(stT * 1.5f) % 2 == 0 ? -1 : 1;                    // отводит взгляд
+                    pose.Eyes = (int)(stT * 3) % 4 == 0 ? Eyes.Closed : Eyes.Squint;
+                    pose.Mouth = Mouth.Smile;
+                }
+                break;
             case St.Peek:
                 if (stT < 0.9f) { pose.Legs = Legs.Brace; pose.Eyes = Eyes.Squint; }
                 else if (stT < 2.8f) pose.Legs = Legs.Run;
@@ -1561,6 +1619,11 @@ class PetForm : LayeredForm
                     pose.LookX = 0; pose.LookY = 1;
                 }
                 else if (fEatT > 0 || fa == FA.Snack) { pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; }
+                else if (fFartT > 0)
+                {
+                    pose.Blush = true; pose.LookY = 1; pose.Mouth = Mouth.Smile;
+                    pose.Eyes = fFartT > 1.6f ? Eyes.Wide : (int)(fFartT * 3) % 4 == 0 ? Eyes.Closed : Eyes.Squint;
+                }
                 else if (fHappyT > 0) { pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Legs = Legs.Tuck; }
                 else if (fDizzyT > 0) { pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.O; }
                 else switch (fa)
@@ -1716,6 +1779,30 @@ class PetForm : LayeredForm
                 g.FillRectangle(sb, p.X - a / 2, p.Y - b / 2, a, b);
                 break;
             }
+            case 7: // облачко: пиксельные клубы, растут и тают
+            {
+                float k = 1 - p.Life / p.Max, s = p.Size * (1 + k * 0.9f);
+                s = MathF.Max(P, MathF.Round(s / P) * P);
+                using var cb = new SolidBrush(Color.FromArgb((int)(alpha * 0.75f), p.C));
+                float x0 = MathF.Round(p.X / P) * P, y0 = MathF.Round(p.Y / P) * P;
+                g.FillRectangle(cb, x0 - s / 2, y0 - s / 2, s, s);
+                g.FillRectangle(cb, x0 - s / 2 - P, y0 - s / 2 + P, P, MathF.Max(P, s - 2 * P));
+                g.FillRectangle(cb, x0 + s / 2, y0 - s / 2 + P, P, MathF.Max(P, s - 2 * P));
+                break;
+            }
+            case 8: // капелька пота
+            {
+                using var ob = new SolidBrush(Color.FromArgb(alpha, skin.Outline));
+                using var db = new SolidBrush(Color.FromArgb(alpha, p.C));
+                using var hb = new SolidBrush(Color.FromArgb(alpha, 235, 248, 255));
+                float x0 = MathF.Round(p.X / P) * P, y0 = MathF.Round(p.Y / P) * P;
+                g.FillRectangle(ob, x0 - P, y0 - P, 3 * P, 2 * P);
+                g.FillRectangle(ob, x0 - 2 * P, y0 + P, 5 * P, 3 * P);
+                g.FillRectangle(db, x0, y0, P, P);
+                g.FillRectangle(db, x0 - P, y0 + P, 3 * P, 2 * P);
+                g.FillRectangle(hb, x0 - P, y0 + P, P, P);
+                break;
+            }
             case 6:
             {
                 using var f = new Font("Segoe UI Symbol", 2.4f * P, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -1738,17 +1825,17 @@ class BallForm : LayeredForm
     public float Rad => R * U;
     public event Action Removed, Thrown;
 
-    readonly float U, R = 13;
+    readonly float U, R = 13, Cell;
     readonly Bitmap bmp;
     readonly Stopwatch sw = Stopwatch.StartNew();
     readonly Queue<(float t, Point p)> trail = new();
     float rot;
     PointF off;
 
-    public BallForm(float u, float x, float y)
+    public BallForm(float u, float cell, float x, float y)
     {
         Stage = true;
-        U = u; X = x; Y = y;
+        U = u; X = x; Y = y; Cell = Math.Max(1, cell);
         bmp = new Bitmap((int)Math.Ceiling(32 * U), (int)Math.Ceiling(32 * U), PixelFormat.Format32bppArgb);
         Text = "Мячик";
     }
@@ -1863,19 +1950,45 @@ class BallForm : LayeredForm
     {
         using var g = Graphics.FromImage(bmp);
         g.Clear(Color.Transparent);
-        g.ScaleTransform(U, U);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        var rect = new RectangleF(16 - R, 16 - R, R * 2, R * 2);
-        using (var w = new SolidBrush(Color.FromArgb(255, 250, 244))) g.FillEllipse(w, rect);
+        g.SmoothingMode = SmoothingMode.None;
+        // пиксельный пляжный мячик в той же сетке, что и клопус: три дольки крутятся вместе с мячом
+        float c = Cell;
+        int n = Math.Max(7, (int)Math.Round(2 * R * U / c)) | 1;
+        while ((n + 2) * c > bmp.Width && n > 7) n -= 2;
+        float mid = (n - 1) / 2f, rr = n / 2f - 0.2f, ox = bmp.Width / 2f - n * c / 2f, oy = bmp.Height / 2f - n * c / 2f;
+        bool In(int i, int j) => i >= 0 && j >= 0 && i < n && j < n && (i - mid) * (i - mid) + (j - mid) * (j - mid) <= rr * rr;
+        Color white = Color.FromArgb(255, 250, 244), outline = Color.FromArgb(42, 24, 18);
         Color[] cols = { Color.FromArgb(217, 119, 87), Color.FromArgb(127, 233, 255), Color.FromArgb(255, 205, 60) };
-        float deg = rot * 180 / (float)Math.PI;
-        for (int i = 0; i < 3; i++)
+        Color[] shade = { Color.FromArgb(184, 92, 66), Color.FromArgb(92, 196, 222), Color.FromArgb(222, 168, 40) };
+        using var ob = new SolidBrush(outline);
+        for (int j = -1; j <= n; j++)
+            for (int i = -1; i <= n; i++)
+                if (!In(i, j) && (In(i - 1, j) || In(i + 1, j) || In(i, j - 1) || In(i, j + 1)))
+                    g.FillRectangle(ob, ox + i * c, oy + j * c, c, c);
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+            {
+                if (!In(i, j)) continue;
+                float dx = i - mid, dy = j - mid;
+                Color col;
+                if (dx * dx + dy * dy < 0.6f) col = white; // белая серединка
+                else
+                {
+                    double a = Math.Atan2(dy, dx) - rot;
+                    int w = (int)Math.Floor(((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI / 3));
+                    bool low = dx + dy > rr * 0.9f; // тень снизу справа
+                    col = low ? shade[Math.Min(w, 2)] : cols[Math.Min(w, 2)];
+                }
+                using var b = new SolidBrush(col);
+                g.FillRectangle(b, ox + i * c, oy + j * c, c, c);
+            }
+        // блик
+        using (var hl = new SolidBrush(Color.FromArgb(255, 255, 255)))
         {
-            using var b = new SolidBrush(cols[i]);
-            g.FillPie(b, rect.X, rect.Y, rect.Width, rect.Height, deg + i * 120, 60);
+            int hx = (int)Math.Round(mid - rr * 0.45f), hy = (int)Math.Round(mid - rr * 0.55f);
+            if (In(hx, hy)) g.FillRectangle(hl, ox + hx * c, oy + hy * c, c, c);
+            if (In(hx + 1, hy)) g.FillRectangle(hl, ox + (hx + 1) * c, oy + hy * c, c, c);
         }
-        using (var p = new Pen(Color.FromArgb(42, 24, 18), 2)) g.DrawEllipse(p, rect);
-        using (var hl = new SolidBrush(Color.FromArgb(120, 255, 255, 255))) g.FillEllipse(hl, 16 - R * 0.55f, 16 - R * 0.7f, R * 0.6f, R * 0.4f);
         Present(bmp, (int)Math.Round(X - 16 * U), (int)Math.Round(Y - 16 * U));
     }
 }
