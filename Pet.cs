@@ -281,7 +281,7 @@ class PetForm : LayeredForm
         pawT = 0.12f;
         if (st == St.Sleep)
         {
-            StartAir(AirKind.Jump, 0, -520 * U);
+            WakeUp();
             return;
         }
         if (st == St.Float)
@@ -358,7 +358,7 @@ class PetForm : LayeredForm
     bool Grounded => st is not (St.Drag or St.Air or St.Float);
     bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter or St.Peek or St.PeekSide;
 
-    void Set(St s, float dur = 0) { st = s; stT = 0; stDur = dur; }
+    void Set(St s, float dur = 0) { if (s != St.Stretch) waking = false; st = s; stT = 0; stDur = dur; }
     float Rand(float a, float b) => a + (float)rnd.NextDouble() * (b - a);
     Rectangle WA => Desk.AreaAt(new Point((int)x, (int)y - 10));
 
@@ -418,7 +418,9 @@ class PetForm : LayeredForm
         if (Grounded && !Busy) Set(St.Run);
     }
 
-    void WakeUp() => StartAir(AirKind.Jump, 0, -520 * U);
+    /// Просыпается не прыжком, а по-человечески: сонно моргает сидя, потом потягивается и зевает.
+    bool waking;
+    void WakeUp() { Set(St.Stretch, 2.6f); waking = true; }
 
     void SpawnGlyph()
     {
@@ -597,7 +599,7 @@ class PetForm : LayeredForm
         beatCount = (int)beatPos;
         double frac = beatPos - Math.Floor(beatPos);
         nod = (float)((1 - frac) * (1 - frac));
-        if (party && !peekAfterWalk && st is St.Idle or St.Walk or St.Look or St.Sit or St.Stretch or St.Wave) Set(St.Party);
+        if (party && !peekAfterWalk && !waking && st is St.Idle or St.Walk or St.Look or St.Sit or St.Stretch or St.Wave) Set(St.Party);
 
         float tsx = 1, tsy = 1;
 
@@ -731,9 +733,10 @@ class PetForm : LayeredForm
                 break;
 
             case St.Stretch:
-                tsy = 1 + 0.16f * (float)Math.Sin(Math.Clamp(stT / stDur, 0, 1) * Math.PI);
+                float sk = waking ? (stT - 1) / (stDur - 1) : stT / stDur;
+                tsy = 1 + 0.16f * (float)Math.Sin(Math.Clamp(sk, 0, 1) * Math.PI);
                 tsx = 2 - tsy;
-                if (stT > stDur) Set(St.Idle, Rand(1, 2));
+                if (stT > stDur) { waking = false; Set(St.Idle, Rand(1, 2)); }
                 break;
 
             case St.Look:
@@ -1495,9 +1498,14 @@ class PetForm : LayeredForm
             case St.Eat: pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; break;
             case St.Crouch: pose.Legs = Legs.Brace; break;
             case St.Teeter: pose.Legs = Legs.Brace; pose.Arms = Arms.Out; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Stretch when waking && stT < 1.0f:
+                pose.Sit = true;
+                pose.Eyes = stT < 0.45f ? Eyes.Closed : stT < 0.6f ? Eyes.Squint : stT < 0.75f ? Eyes.Closed : Eyes.Squint;
+                break;
             case St.Stretch:
                 pose.Arms = Arms.Up; pose.Eyes = Eyes.Closed;
-                if (stT > 0.35f && stT < 1.2f) pose.Mouth = Mouth.Yawn;
+                float yt = waking ? stT - 1 : stT;
+                if (yt > 0.35f && yt < 1.2f) pose.Mouth = Mouth.Yawn;
                 break;
             case St.Yawn: pose.Eyes = Eyes.Closed; pose.Mouth = Mouth.Yawn; break;
             case St.Look: pose.LookX = 1; if (pose.Eyes != Eyes.Blink) pose.Eyes = Eyes.Open; break;

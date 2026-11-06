@@ -407,7 +407,9 @@ class LofiSynth : ISampleProvider
     readonly float[] noise = new float[SR];
     readonly float[] delay = new float[SR * 2];
     readonly Random rnd = new();
-    readonly Biquad master, hiss, rainF;
+    readonly Biquad master, hiss, rainF, rainF2;
+    // капли дождя: короткие «плинк» с падающим тоном
+    readonly double[] dropPh = new double[10], dropF = new double[10], dropAmp = new double[10], dropPan = new double[10];
     double cut = 600, cutTarget = 600, duck, pop, rainLevel, level = 1, levelTarget = 1;
     long n, nextStep;
     int ts, di, ni, ci;
@@ -418,7 +420,8 @@ class LofiSynth : ISampleProvider
         for (int i = 0; i < noise.Length; i++) noise[i] = (float)(rnd.NextDouble() * 2 - 1);
         master = new Biquad('l', cut, SR);
         hiss = new Biquad('h', 4000, SR);
-        rainF = new Biquad('l', 1800, SR);
+        rainF = new Biquad('l', 650, SR);
+        rainF2 = new Biquad('l', 650, SR);
         nextStep = SR / 10;
     }
 
@@ -661,8 +664,34 @@ class LofiSynth : ISampleProvider
             if (rnd.NextDouble() < 3.0 / SR) pop = (rnd.NextDouble() < 0.5 ? -1 : 1) * (0.05 + rnd.NextDouble() * 0.08);
             vinyl += pop;
             pop *= 0.6;
-            if (Track?.Rain == true) rainLevel += (0.05 - rainLevel) * 0.00002; else rainLevel *= 0.99998;
-            double rain = rainF.Run(noise[(ci * 3) % noise.Length]) * rainLevel;
+            // дождь: глухой мягкий фон за окном и редкие капли, без телевизионного шипения
+            if (Track?.Rain == true) rainLevel += (1 - rainLevel) * 0.00002; else rainLevel *= 0.99998;
+            double rain = 0, rainSide = 0;
+            if (rainLevel > 0.001)
+            {
+                double swell = 0.75 + 0.25 * Math.Sin(2 * Math.PI * 0.07 * t);
+                rain = rainF2.Run(rainF.Run(noise[(ci * 3) % noise.Length])) * 0.035 * rainLevel * swell;
+                if (rnd.NextDouble() < 14.0 * rainLevel / SR)
+                    for (int d = 0; d < dropAmp.Length; d++)
+                        if (dropAmp[d] < 0.0005)
+                        {
+                            dropAmp[d] = 0.006 + rnd.NextDouble() * 0.014;
+                            dropF[d] = 1400 + rnd.NextDouble() * 2600;
+                            dropPh[d] = 0;
+                            dropPan[d] = rnd.NextDouble() * 1.6 - 0.8;
+                            break;
+                        }
+                for (int d = 0; d < dropAmp.Length; d++)
+                {
+                    if (dropAmp[d] < 0.0005) continue;
+                    dropPh[d] += 2 * Math.PI * dropF[d] / SR;
+                    double v = Math.Sin(dropPh[d]) * dropAmp[d];
+                    rain += v;
+                    rainSide += v * dropPan[d];
+                    dropAmp[d] *= 0.9965;
+                    dropF[d] *= 0.99993;
+                }
+            }
 
             if ((n & 511) == 0)
             {
@@ -673,7 +702,7 @@ class LofiSynth : ISampleProvider
 
             double mono = master.Run(((l + r) / 2 + echoed * 0.8) * 0.9) * level + vinyl + rain;
             mono = Math.Tanh(mono * 1.3) / 1.3;
-            double side = (r - l) / 2 * 0.5;
+            double side = (r - l) / 2 * 0.5 + rainSide;
             gain += (target - gain) * 0.00005f;
             buffer[offset + i] = (float)Math.Clamp((mono - side) * gain, -1, 1);
             buffer[offset + i + 1] = (float)Math.Clamp((mono + side) * gain, -1, 1);
