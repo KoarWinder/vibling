@@ -34,6 +34,7 @@ class PetForm : LayeredForm
     readonly Pose pose = new();
     readonly NotifyIcon tray = new();
     readonly HashSet<int> keysDown = new();
+    int pendingKeys;
     readonly Native.HookProc hookProc;
     IntPtr hook;
     SettingsWindow settingsWindow;
@@ -105,9 +106,16 @@ class PetForm : LayeredForm
             else if (e.Button == MouseButtons.Right) ShowMenu(Cursor.Position);
         };
 
+        // Хук клавиатуры живёт в своём потоке: Windows ждёт его ответа на каждое нажатие,
+        // и если бы он делил поток с отрисовкой, ввод во всех программах подтормаживал бы.
         hookProc = HookCb;
-        using (var cur = Process.GetCurrentProcess())
-            hook = Native.SetWindowsHookEx(13, hookProc, Native.GetModuleHandle(cur.MainModule.ModuleName), 0);
+        var hookThread = new Thread(() =>
+        {
+            using (var cur = Process.GetCurrentProcess())
+                hook = Native.SetWindowsHookEx(13, hookProc, Native.GetModuleHandle(cur.MainModule.ModuleName), 0);
+            Application.Run();
+        }) { IsBackground = true, Name = "keys", Priority = ThreadPriority.AboveNormal };
+        hookThread.Start();
 
         timer.Interval = 30;
         timer.Tick += (_, _) => Tick();
@@ -265,7 +273,7 @@ class PetForm : LayeredForm
         if (n >= 0)
         {
             int msg = (int)w, vk = Marshal.ReadInt32(l);
-            if (msg == 0x100 || msg == 0x104) { if (keysDown.Add(vk)) OnKey(); }
+            if (msg == 0x100 || msg == 0x104) { if (keysDown.Add(vk)) Interlocked.Increment(ref pendingKeys); }
             else if (msg == 0x101 || msg == 0x105) keysDown.Remove(vk);
         }
         return Native.CallNextHookEx(hook, n, w, l);
@@ -534,6 +542,7 @@ class PetForm : LayeredForm
         float dt = Math.Min(0.05f, now - lastT);
         lastT = now;
         time += dt;
+        for (int k = Math.Min(Interlocked.Exchange(ref pendingKeys, 0), 20); k > 0; k--) OnKey();
         if (bmp.Width != (int)Math.Ceiling(36 * S.Pixel * U)) ApplySize();
 
         fsT -= dt;
@@ -553,8 +562,16 @@ class PetForm : LayeredForm
         if (hideUntil > 0 && time >= hideUntil) { hideUntil = -1; SetHidden(false); }
         if (fsHidden) return;
 
+        // пока стрелка спрятана из-за печати, окна не двигаем: иначе Windows снова показывает её на каждом сдвиге
+        bool hold = Native.PointerHidden() && st is not (St.Air or St.Drag) && !dragging;
+        float hx = x, hy = y, bx = ball?.X ?? 0, by = ball?.Y ?? 0;
         Step(dt);
         ball?.Step(dt);
+        if (hold && st is not (St.Air or St.Drag))
+        {
+            x = hx; y = hy;
+            if (ball != null && !ball.Held) { ball.X = bx; ball.Y = by; }
+        }
         if (!hidden) Render();
 
         saveT += dt;

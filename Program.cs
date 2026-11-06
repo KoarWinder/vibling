@@ -69,6 +69,16 @@ static class Native
     [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint Size, Time; }
     [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
 
+    [StructLayout(LayoutKind.Sequential)] struct CURSORINFO { public int Size, Flags; public IntPtr Cursor; public POINT Pos; }
+    [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO info);
+
+    /// Windows прячет стрелку, пока человек печатает; любой сдвиг нашего окна заставил бы её показаться снова.
+    public static bool PointerHidden()
+    {
+        var c = new CURSORINFO { Size = Marshal.SizeOf<CURSORINFO>() };
+        return GetCursorInfo(ref c) && (c.Flags & 1) == 0;
+    }
+
     public static double IdleSeconds()
     {
         var i = new LASTINPUTINFO { Size = 8 };
