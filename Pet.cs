@@ -1530,7 +1530,7 @@ class PetForm : LayeredForm
                 if (beatCount % 32 == 31) pose.Arms = Arms.Up;
                 break;
             case St.Float:
-                pose.Legs = Legs.Dangle;
+                pose.Legs = Legs.Drift;
                 if (bonkT > 0 || squintT > 0) { pose.Eyes = Eyes.Squint; pose.Arms = Arms.Out; }
                 else if (fSleep || fa == FA.Nap) { pose.Eyes = Eyes.Closed; pose.Legs = Legs.Tuck; }
                 else if ((S.Bongo && time - lastKeyT < 2.5f) || fa == FA.Code)

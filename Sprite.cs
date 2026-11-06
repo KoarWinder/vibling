@@ -57,7 +57,7 @@ static class Looks
     public static IEnumerable<string> Ordered(IEnumerable<string> wear) => DrawOrder.Where(wear.Contains);
 }
 
-enum Legs { Stand, Walk, Run, Dangle, Tuck, Brace, Skid, Hidden }
+enum Legs { Stand, Walk, Run, Dangle, Drift, Tuck, Brace, Skid, Hidden }
 enum Arms { Side, Swing, Up, Flail, Wave, Typing, Out, Umbrella }
 enum Eyes { Open, Blink, Happy, Closed, Wide, Squint }
 enum Mouth { None, Smile, O, Open, Chew, Yawn }
@@ -147,6 +147,11 @@ static class Sprite
                         len = i % 2 == ph2(p.Legs == Legs.Run ? 14 : 9) ? 2 : 1;
                         break;
                     case Legs.Dangle: len = 2 + ((int)(p.Phase * 5) + i) % 2; break;
+                    case Legs.Drift:
+                        // в невесомости ноги расслаблены, раз в пять секунд одна лениво потягивается
+                        len = i is 1 or 2 ? 3 : 2;
+                        if (p.Phase % 5f < 0.4f && (int)(p.Phase / 5f) % 4 == i) len++;
+                        break;
                     case Legs.Tuck: len = 1; break;
                 }
                 Rect(cols[i], 10, cols[i], 9 + len, s.Shade);

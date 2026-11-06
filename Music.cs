@@ -80,30 +80,56 @@ class LofiTrack
     public static readonly string[] Styles = { "calm", "classic", "jazz", "rainy", "night", "sunny" };
 
     public string Name, Key, Mode, Style;
-    public int Bpm, RootM, KeysKind, LeadKind, CompKind, BassKind;
-    public int[] Scale, Kick, Snare, Rim;
-    public double[] Hat = new double[16];
-    public double Swing, Cut, Dly, MelDensity, OpenHat = -1;
+    public int Bpm, RootM, KeysKind, LeadKind, BassKind;
+    public int[] Scale;
+    public double Swing, Cut, Dly, MelDensity, HatLevel;
     public bool Ninths, Rain;
-    public (int bass, int[] notes)[] Chords;
+    public (int bass, int[] notes)[][] Progs;
+    public int[] HarmRhythm;
+    public (int[] kick, int[] snare, int[] rim)[] Grooves;
+    public double[][] Hats;
     public int[][] Motifs;
-    public List<(string kind, int bars)> Sections = new();
+    public List<Section> Sections = new();
     public int TotalBars;
     public Func<double> R;
+
+    /// Кусок трека: что в нём звучит и как.
+    public class Section
+    {
+        public string Kind;
+        public int Bars;
+        public int Drums;            // 0 нет, 1 только бочка и хэт, 2 всё
+        public bool Bass, Comp = true, Half, Final;
+        public int Lead = -1, Prog, Groove, Hat, CompPat, Fill;
+        public double Filter = 1, FilterFrom = -1, Level = 1, LevelFrom = -1, LeadVol = 0.16;
+        public Section(string kind, int bars) { Kind = kind; Bars = bars; }
+    }
+
+    /// Ритмы аккомпанемента: (шаг, длина в шагах).
+    public static readonly (int at, int len)[][] CompPats =
+    {
+        new[] { (0, 15) },
+        new[] { (0, 9), (10, 6) },
+        new[] { (0, 3), (6, 3), (11, 3) },
+        new[] { (0, 7), (8, 7) },
+        new[] { (0, 5), (6, 4), (10, 6) },
+        new[] { (0, 2), (3, 2), (8, 3), (14, 2) },
+        new[] { (2, 6), (10, 6) },
+        new[] { (0, 30) },
+    };
 
     public int Deg(int d) => RootM + Scale[((d % 7) + 7) % 7] + 12 * (int)Math.Floor(d / 7.0);
 
     /// Какая часть трека идёт в такте bar: вид части, номер такта внутри неё и её длина.
-    public (string kind, int bar, int len, int index) SectionAt(int bar)
+    public (Section sec, int bar) SectionAt(int bar)
     {
         int at = 0;
-        for (int i = 0; i < Sections.Count; i++)
+        foreach (var sec in Sections)
         {
-            var (kind, bars) = Sections[i];
-            if (bar < at + bars) return (kind, bar - at, bars, i);
-            at += bars;
+            if (bar < at + sec.Bars) return (sec, bar - at);
+            at += sec.Bars;
         }
-        return ("tail", 0, 1, Sections.Count);
+        return (new Section("tail", 1) { Comp = false }, 0);
     }
 
     public static string StyleName(string style, bool ru) => style switch
@@ -125,7 +151,7 @@ class LofiTrack
         ("гармонический минор", "harmonic minor", new[] { 0, 2, 3, 5, 7, 8, 11 }), ("мелодический минор", "melodic minor", new[] { 0, 2, 3, 5, 7, 9, 11 }),
     };
     static readonly string[] Keys = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
-    static readonly int[][] Progs =
+    static readonly int[][] ProgPool =
     {
         new[] { 0, 5, 3, 4 }, new[] { 0, 3, 4, 3 }, new[] { 0, 4, 5, 3 }, new[] { 1, 4, 0, 0 }, new[] { 0, 2, 3, 4 },
         new[] { 5, 3, 0, 4 }, new[] { 0, 5, 1, 4 }, new[] { 0, 3, 5, 4 }, new[] { 0, 0, 3, 4 }, new[] { 0, 6, 5, 4 },
@@ -186,77 +212,176 @@ class LofiTrack
         t.Rain = t.Style == "rainy";
         t.Dly = 0.2 + r() * 0.25;
 
-        var prog = (int[])Pick(Progs).Clone();
-        if (r() < 0.3) prog[3] = Ri(0, 6);
+        // гармония: основная и вторая последовательность, аккорды раз в такт или два раза в такт
         int[] tones = t.Ninths ? new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 4, 6 };
-        t.Chords = prog.Select(d => (t.Deg(d), tones.Select(k => t.Deg(d + k) + 12).ToArray())).ToArray();
+        (int, int[]) Chord(int d)
+        {
+            var notes = tones.Select(k => t.Deg(d + k) + 12).ToArray();
+            if (r() < 0.35) notes[0] += 12; // обращение
+            Array.Sort(notes);
+            return (t.Deg(d), notes);
+        }
+        (int, int[])[] Prog()
+        {
+            var pr = (int[])Pick(ProgPool).Clone();
+            if (r() < 0.3) pr[3] = Ri(0, 6);
+            if (r() < 0.25) pr = pr.Concat(new[] { pr[0], pr[1], Ri(0, 6), pr[3] }).ToArray();
+            if (r() < 0.15) pr = new[] { pr[0], pr[1] };
+            return pr.Select(Chord).ToArray();
+        }
+        t.Progs = new[] { Prog(), Prog() };
+        t.HarmRhythm = new[] { r() < 0.2 ? 2 : 1, r() < 0.35 ? 2 : 1 };
 
         // тембры: 0 электропиано, 1 мягкий пэд, 2 мягкое пианино; мелодия: 0 электропиано, 2 пианино, 3 калимба, 4 флейта
-        (t.KeysKind, t.LeadKind, t.CompKind, t.BassKind) = t.Style switch
+        (t.KeysKind, t.LeadKind, t.BassKind) = t.Style switch
         {
-            "calm" => (Pick(new[] { 1, 0, 2 }), Pick(new[] { 4, 3 }), 0, 0),
-            "classic" => (Pick(new[] { 0, 2 }), Pick(new[] { 2, 0, 3 }), 1, 1),
-            "jazz" => (0, Pick(new[] { 0, 2 }), 2, 2),
-            "rainy" => (Pick(new[] { 1, 2 }), Pick(new[] { 3, 4 }), 0, 0),
-            "night" => (Pick(new[] { 1, 0 }), 4, 0, 3),
-            _ => (Pick(new[] { 0, 2 }), 3, 3, 1),
+            "calm" => (Pick(new[] { 1, 0, 2 }), Pick(new[] { 4, 3, 2 }), Pick(new[] { 0, 3 })),
+            "classic" => (Pick(new[] { 0, 2 }), Pick(new[] { 2, 0, 3 }), Pick(new[] { 1, 0 })),
+            "jazz" => (Pick(new[] { 0, 2 }), Pick(new[] { 0, 2, 4 }), 2),
+            "rainy" => (Pick(new[] { 1, 2 }), Pick(new[] { 3, 4, 2 }), Pick(new[] { 0, 3 })),
+            "night" => (Pick(new[] { 1, 0 }), Pick(new[] { 4, 0 }), Pick(new[] { 3, 1 })),
+            _ => (Pick(new[] { 0, 2 }), Pick(new[] { 3, 2 }), Pick(new[] { 1, 0 })),
+        };
+        int[] compPool = t.Style switch
+        {
+            "calm" => new[] { 0, 7, 3, 6 },
+            "classic" => new[] { 1, 3, 4, 6 },
+            "jazz" => new[] { 2, 4, 6 },
+            "rainy" => new[] { 0, 7, 3 },
+            "night" => new[] { 0, 3, 7, 6 },
+            _ => new[] { 5, 3, 4, 1 },
         };
 
-        int[] kick, snare, rim = Array.Empty<int>();
-        switch (t.Style)
+        // барабаны: несколько грувов на стиль, в треке берётся два разных
+        (int[], int[], int[])[] pool = t.Style switch
         {
-            case "calm":
-                kick = new[] { 0, 9 }; snare = new[] { 8 };
-                for (int i = 0; i < 16; i += 4) t.Hat[i] = 0.035;
-                break;
-            case "classic":
-                kick = r() < 0.5 ? new[] { 0, 7, 10 } : new[] { 0, 10 }; snare = new[] { 4, 12 };
-                for (int i = 0; i < 16; i++) t.Hat[i] = i % 2 == 0 ? 0.055 : r() < 0.35 ? 0.02 : 0;
-                break;
-            case "jazz":
-                kick = new[] { 0, 10 }; snare = Array.Empty<int>(); rim = new[] { 4, 12 };
-                for (int i = 0; i < 16; i++) t.Hat[i] = i % 4 == 0 ? 0.05 : i % 4 == 3 ? 0.035 : 0;
-                break;
-            case "rainy":
-                kick = new[] { 0 }; snare = Array.Empty<int>(); rim = new[] { 8 };
-                for (int i = 0; i < 16; i++) t.Hat[i] = 0.015;
-                break;
-            case "night":
-                kick = new[] { 0, 7, 10 }; snare = new[] { 8 };
-                for (int i = 0; i < 16; i += 2) t.Hat[i] = 0.03;
-                break;
-            default:
-                kick = new[] { 0, 8, 10 }; snare = new[] { 4, 12 };
-                for (int i = 0; i < 16; i++) t.Hat[i] = i % 2 == 0 ? 0.04 : 0.02;
-                t.OpenHat = 14;
-                break;
+            "calm" => new[] { (new[] { 0, 9 }, new[] { 8 }, new int[0]), (new[] { 0, 10 }, new[] { 8 }, new int[0]), (new[] { 0 }, new int[0], new[] { 8 }), (new[] { 0, 7 }, new[] { 8 }, new int[0]), (new[] { 0, 6, 9 }, new int[0], new[] { 8 }) },
+            "classic" => new[] { (new[] { 0, 7, 10 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 10 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 3, 10 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 8, 11 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 6, 10 }, new[] { 4, 12 }, new[] { 15 }) },
+            "jazz" => new[] { (new[] { 0, 10 }, new int[0], new[] { 4, 12 }), (new[] { 0, 7 }, new int[0], new[] { 4, 12 }), (new[] { 0, 11 }, new[] { 12 }, new[] { 4 }), (new[] { 0, 6, 10 }, new[] { 4, 12 }, new int[0]) },
+            "rainy" => new[] { (new[] { 0 }, new int[0], new[] { 8 }), (new[] { 0, 10 }, new int[0], new[] { 8 }), (new[] { 0, 9 }, new[] { 8 }, new int[0]), (new[] { 0, 7 }, new int[0], new[] { 12 }) },
+            "night" => new[] { (new[] { 0, 7, 10 }, new[] { 8 }, new int[0]), (new[] { 0, 10 }, new[] { 8 }, new int[0]), (new[] { 0, 3, 7 }, new[] { 8 }, new[] { 14 }), (new[] { 0, 9 }, new int[0], new[] { 4, 12 }) },
+            _ => new[] { (new[] { 0, 8, 10 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 6, 10 }, new[] { 4, 12 }, new int[0]), (new[] { 0, 7, 8 }, new[] { 4, 12 }, new[] { 2 }), (new[] { 0, 10 }, new[] { 4, 12 }, new[] { 7 }) },
+        };
+        int g0 = (int)(r() * pool.Length), g1 = (g0 + 1 + (int)(r() * (pool.Length - 1))) % pool.Length;
+        t.Grooves = new[] { pool[g0], pool[g1] };
+        t.HatLevel = t.Style switch { "calm" => 0.032, "rainy" => 0.02, "night" => 0.03, "jazz" => 0.045, "sunny" => 0.042, _ => 0.05 };
+        double[] HatPat()
+        {
+            var h = new double[16];
+            switch (Ri(0, 5))
+            {
+                case 0: for (int i = 0; i < 16; i += 2) h[i] = 1; break;                                       // восьмые
+                case 1: for (int i = 0; i < 16; i++) h[i] = i % 2 == 0 ? 1 : r() < 0.4 ? 0.4 : 0; break;     // восьмые с призраками
+                case 2: for (int i = 0; i < 16; i += 4) h[i] = 1; break;                                       // четверти
+                case 3: for (int i = 0; i < 16; i++) h[i] = i % 4 == 0 ? 1 : i % 2 == 0 ? 0.6 : 0.35; break;  // шестнадцатые
+                case 4: for (int i = 2; i < 16; i += 4) h[i] = 1; break;                                       // на слабые
+                default: for (int i = 0; i < 16; i++) h[i] = i % 4 == 0 ? 1 : i % 4 == 3 ? 0.7 : 0; break;   // джазовый «тсс-та»
+            }
+            return h;
         }
-        t.Kick = kick; t.Snare = snare; t.Rim = rim;
+        t.Hats = new[] { HatPat(), HatPat() };
 
-        // мелодия: два мотива по два такта, сильные доли чаще
+        // мелодия: три мотива по два такта, сильные доли чаще
         t.MelDensity = t.Style switch { "calm" => 0.45, "rainy" => 0.4, "night" => 0.4, "jazz" => 0.65, "sunny" => 0.7, _ => 0.55 };
         int[] Motif()
         {
             int i = Ri(3, 6);
+            int shift = Ri(0, 3); // мотив может начинаться не с сильной доли
             return Enumerable.Range(0, 32).Select(s =>
             {
-                double p = s % 8 == 0 ? 0.75 : s % 4 == 0 ? 0.45 : s % 2 == 0 ? 0.25 : 0.06;
+                int q = (s + shift) % 32;
+                double p = q % 8 == 0 ? 0.75 : q % 4 == 0 ? 0.45 : q % 2 == 0 ? 0.25 : 0.06;
                 if (r() < p * t.MelDensity) { i = Math.Clamp(i + Ri(-2, 2), 0, 9); return i; }
                 return -1;
             }).ToArray();
         }
         t.Motifs = new[] { Motif(), Motif(), Motif() };
 
-        // форма: вступление, части, брейк, концовка и немного тишины с винилом
-        t.Sections.Add(("intro", 4));
-        t.Sections.Add(("a", 8));
-        t.Sections.Add(("b", 8));
-        if (r() < 0.7) t.Sections.Add(("break", 4));
-        t.Sections.Add(("a2", 8));
-        if (r() < 0.6) t.Sections.Add(("b", 8));
-        t.Sections.Add(("outro", 4));
-        t.Sections.Add(("tail", 1));
-        t.TotalBars = t.Sections.Sum(x => x.bars);
+        // ---- форма: каждый раз своя ----
+        var S = t.Sections;
+        int Len(params int[] a) => Pick(a);
+        int fills = 0;
+        int Fill() => r() < 0.75 ? Ri(1, 4) : 0;
+
+        // вступление
+        switch (Pick(new[] { "keys", "keys", "drums", "lead", "bass", "vinyl", "cold", "filtered" }))
+        {
+            case "keys":
+                S.Add(new Section("intro", Len(2, 4, 4, 8)) { FilterFrom = 0.18, Filter = 0.8, CompPat = Pick(compPool) });
+                break;
+            case "drums": // сначала один бит под фильтром, потом заходят клавиши
+                S.Add(new Section("intro", Len(1, 2, 2)) { Comp = false, Drums = 1, Filter = 0.35, Groove = 0, Hat = 0 });
+                S.Add(new Section("intro", Len(2, 4)) { Drums = 1, FilterFrom = 0.35, Filter = 0.75, CompPat = Pick(compPool), Groove = 0, Hat = 0 });
+                break;
+            case "lead": // мотив почти один, под тихий аккорд
+                S.Add(new Section("intro", Len(4, 4, 2)) { CompPat = 7, Lead = Ri(0, 2), LeadVol = 0.13, FilterFrom = 0.3, Filter = 0.7 });
+                break;
+            case "bass":
+                S.Add(new Section("intro", Len(2, 4)) { Bass = true, CompPat = Pick(compPool), FilterFrom = 0.25, Filter = 0.6 });
+                break;
+            case "vinyl": // такт тишины с пластинкой
+                S.Add(new Section("intro", 1) { Comp = false, Filter = 0.2 });
+                S.Add(new Section("intro", Len(2, 4)) { CompPat = Pick(compPool), FilterFrom = 0.2, Filter = 0.7 });
+                break;
+            case "filtered": // весь бит, но словно из-за стены
+                S.Add(new Section("intro", Len(2, 4)) { Drums = 2, Bass = true, CompPat = Pick(compPool), Filter = 0.12, FilterFrom = 0.08 });
+                break;
+            default: break; // сразу с бита
+        }
+        if (S.Count > 0) S[^1].Fill = Fill();
+
+        // основная часть
+        string[] form = Pick(new[]
+        {
+            new[] { "A", "B", "A", "B" }, new[] { "A", "A", "B", "A" }, new[] { "A", "B", "C", "A" }, new[] { "A", "B", "brk", "B" },
+            new[] { "A", "brk", "A", "B" }, new[] { "A", "B", "A", "brk", "B" }, new[] { "A", "C", "B", "A" }, new[] { "A", "B", "B", "brk", "A" },
+            new[] { "A", "A", "brk", "B", "B" }, new[] { "A", "B", "C" },
+        });
+        int leadA = r() < 0.4 ? 0 : -1;
+        int compA = Pick(compPool), compB = Pick(compPool), compC = Pick(compPool);
+        bool firstA = true;
+        foreach (var f in form)
+        {
+            Section sec = f switch
+            {
+                "A" => new Section("a", Len(8, 8, 4, 16)) { Drums = 2, Bass = true, CompPat = compA, Lead = firstA ? leadA : (r() < 0.6 ? 0 : 2), Groove = 0, Hat = 0 },
+                "B" => new Section("b", Len(8, 8, 4)) { Drums = 2, Bass = true, CompPat = compB, Lead = 1, Prog = 1, Groove = r() < 0.6 ? 1 : 0, Hat = 1 },
+                "C" => new Section("c", Len(4, 8)) { Drums = r() < 0.5 ? 2 : 1, Half = r() < 0.6, Bass = true, CompPat = compC, Lead = 2, Prog = r() < 0.5 ? 1 : 0, Groove = 1, Hat = 1, Filter = 0.8 },
+                _ => new Section("break", Len(2, 4, 4)) { Drums = r() < 0.4 ? 1 : 0, Bass = r() < 0.5, CompPat = Pick(new[] { 0, 7, compB }), Lead = r() < 0.5 ? Ri(0, 2) : -1, LeadVol = 0.12, Filter = 0.5 },
+            };
+            if (f == "A") firstA = false;
+            sec.Fill = Fill();
+            fills++;
+            S.Add(sec);
+        }
+
+        // концовка
+        var last = S[^1];
+        switch (Pick(new[] { "fade", "strip", "stop", "lead", "slow" }))
+        {
+            case "fade": // тот же бит медленно уходит под фильтр и в тишину
+                S.Add(new Section("outro", Len(4, 8)) { Drums = 2, Bass = true, CompPat = last.CompPat, Lead = last.Lead, Prog = last.Prog, Groove = last.Groove, Hat = last.Hat, FilterFrom = 1, Filter = 0.15, LevelFrom = 1, Level = 0.05 });
+                break;
+            case "strip": // инструменты уходят по одному
+                S.Add(new Section("outro", 2) { Bass = true, CompPat = last.CompPat, Drums = 1, Prog = last.Prog });
+                S.Add(new Section("outro", 2) { CompPat = last.CompPat, FilterFrom = 0.8, Filter = 0.45 });
+                S.Add(new Section("outro", 2) { Final = true, Filter = 0.45 });
+                break;
+            case "stop": // обрыв на сильную долю и звенящий аккорд
+                last.Fill = 4;
+                S.Add(new Section("outro", 2) { Final = true, Filter = 0.75 });
+                break;
+            case "lead": // мелодия остаётся одна с аккордами
+                S.Add(new Section("outro", 4) { CompPat = 7, Lead = Ri(0, 2), LeadVol = 0.13, FilterFrom = 0.8, Filter = 0.35 });
+                S.Add(new Section("outro", 2) { Final = true, Filter = 0.35 });
+                break;
+            default: // бит без барабанов, долгие аккорды, затухание
+                S.Add(new Section("outro", 4) { Bass = true, CompPat = 0, FilterFrom = 0.8, Filter = 0.3, LevelFrom = 1, Level = 0.4 });
+                S.Add(new Section("outro", 2) { Final = true, Filter = 0.3, Level = 0.4 });
+                break;
+        }
+        S.Add(new Section("tail", 1) { Comp = false, Filter = 0.1 });
+        t.TotalBars = S.Sum(x => x.Bars);
 
         t.Name = ru ? Pick(AdjRu) + " " + Pick(NounRu) : Pick(AdjEn) + " " + Pick(NounEn);
         return t;
@@ -283,7 +408,7 @@ class LofiSynth : ISampleProvider
     readonly float[] delay = new float[SR * 2];
     readonly Random rnd = new();
     readonly Biquad master, hiss, rainF;
-    double cut = 600, cutTarget = 600, duck, pop, rainLevel;
+    double cut = 600, cutTarget = 600, duck, pop, rainLevel, level = 1, levelTarget = 1;
     long n, nextStep;
     int ts, di, ni, ci;
     float gain;
@@ -305,6 +430,7 @@ class LofiSynth : ISampleProvider
     {
         Track = LofiTrack.Make((uint)rnd.Next(), Russian, Style);
         ts = 0;
+        levelTarget = 1;
         Anchor = nextStep / (double)SR;
     }
 
@@ -394,45 +520,61 @@ class LofiSynth : ISampleProvider
         var T = Track;
         var r = T.R;
         int bar = s / 16, st = s % 16;
-        var (kind, inBar, len, _) = T.SectionAt(bar);
-        var ch = T.Chords[bar % 4];
+        var (sec, inBar) = T.SectionAt(bar);
+        var prog = T.Progs[sec.Prog];
+        int hr = T.HarmRhythm[sec.Prog];
+        var ch = prog[(inBar * hr + (hr == 2 && st >= 8 ? 1 : 0)) % prog.Length];
         double hum() => 0.85 + r() * 0.15;
 
         if (st == 0)
         {
-            double full = T.Cut;
-            cutTarget = kind switch
-            {
-                "intro" => 600 + (full - 600) * (inBar + 1) / len,
-                "break" => full * 0.55,
-                "outro" => full - (full - 450) * (inBar + 1) / len,
-                "tail" => 400,
-                _ => full,
-            };
+            double k = sec.Bars <= 1 ? 1 : inBar / (double)(sec.Bars - 1);
+            double f = sec.FilterFrom < 0 ? sec.Filter : sec.FilterFrom + (sec.Filter - sec.FilterFrom) * k;
+            cutTarget = 350 + (T.Cut - 350) * f;
+            levelTarget = sec.LevelFrom < 0 ? sec.Level : sec.LevelFrom + (sec.Level - sec.LevelFrom) * k;
         }
-        if (kind == "tail") return;
+        if (sec.Kind == "tail") return;
 
-        bool lastOutroBar = kind == "outro" && inBar == len - 1;
-        bool drums = kind is "a" or "b" or "a2" || (kind == "outro" && inBar < 2);
-        bool fullDrums = kind is "a" or "b" or "a2";
-        bool bass = kind is "a" or "b" or "a2" || (kind == "outro" && inBar < 2);
+        if (sec.Final)
+        {
+            // один долгий звенящий аккорд с тихой бочкой
+            if (inBar == 0 && st == 0)
+            {
+                var c0 = T.Progs[0][0];
+                Kick(at, 0.45);
+                Bass(at, Mf(c0.bass), Sd * 24, 0.32);
+                for (int i = 0; i < c0.notes.Length; i++)
+                    Keys(at + S(i * 0.03), Mf(c0.notes[i]), Sd * 30, 0.19, T.KeysKind, i % 2 == 0 ? -0.3 : 0.3, 0.45);
+            }
+            return;
+        }
+
+        // сбивка в последнем такте части
+        bool lastBar = inBar == sec.Bars - 1;
+        int fill = lastBar ? sec.Fill : 0;
+        bool drumsHere = sec.Drums > 0 && !(fill == 2 && st >= 12) && !(fill == 4 && st >= 8);
 
         // барабаны
-        if (drums)
+        if (drumsHere)
         {
-            if (T.Kick.Contains(st)) Kick(at, 0.75 * hum());
-            if (fullDrums && T.Snare.Contains(st)) Snare(at, hum());
-            if (fullDrums && T.Rim.Contains(st)) Rim(at, hum());
-            double hv = T.Hat[st];
+            var (kick, snare, rim) = T.Grooves[sec.Groove];
+            if (sec.Half) { kick = new[] { 0, 10 }; snare = new[] { 8 }; rim = Array.Empty<int>(); }
+            if (kick.Contains(st)) Kick(at, 0.75 * hum());
+            if (sec.Drums == 2 && snare.Contains(st)) Snare(at, hum());
+            if (sec.Drums == 2 && rim.Contains(st)) Rim(at, hum());
+            double hv = T.Hats[sec.Hat][st] * T.HatLevel;
+            if (sec.Half && st % 4 != 0) hv = 0;
             if (hv > 0) Noise(at, 0.03, 'h', 7000, hv * hum());
-            if (fullDrums && st == T.OpenHat) Noise(at, 0.14, 'h', 6500, 0.04);
-            if (fullDrums && inBar == len - 1 && st >= 13 && T.Style == "classic") Snare(at, 0.25 + (st - 13) * 0.08);
+            if (fill == 1 && st >= 12 && sec.Drums == 2) Snare(at, 0.22 + (st - 12) * 0.09);
+            if (fill == 3 && (st == 13 || st == 14)) Kick(at, 0.5);
         }
+        if (fill == 4 && st == 8) { Kick(at, 0.8); Noise(at, 0.5, 'h', 5000, 0.05, 0.3); }
 
         // бас
-        if (bass)
+        if (sec.Bass && !(fill == 4 && st >= 8))
         {
             double bf = Mf(ch.bass);
+            bool chordStart = st == 0 || (hr == 2 && st == 8);
             switch (T.BassKind)
             {
                 case 1: if (st == 0 || st == 10 || (st == 7 && r() < 0.4)) Bass(at, bf, Sd * 5, 0.42); break;
@@ -444,47 +586,34 @@ class LofiSynth : ISampleProvider
                     }
                     break;
                 case 3: if (st == 0 || st == 8) Bass(at, bf / 2, Sd * 7, 0.5); break;
-                default: if (st == 0) Bass(at, bf, Sd * 14, 0.4); break;
+                default: if (chordStart) Bass(at, bf, Sd * (hr == 2 ? 7 : 14), 0.4); break;
             }
         }
 
-        // аккорды: в последнем такте концовки — один долгий звенящий аккорд
-        if (lastOutroBar)
+        // аккорды
+        if (sec.Comp && !(fill == 4 && st >= 8))
         {
-            if (st == 0)
-                for (int k = 0; k < ch.notes.Length; k++)
-                    Keys(at + S(k * 0.018), Mf(ch.notes[k]), Sd * 40, 0.19, T.KeysKind, k % 2 == 0 ? -0.3 : 0.3, 0.4);
-            return;
-        }
-        bool comp = T.CompKind switch
-        {
-            1 => st == 0 || st == 10,
-            2 => st == 0 || st == 6 || (st == 11 && r() < 0.5),
-            3 => st == 0 || st == 8,
-            _ => st == 0,
-        };
-        if (comp)
-        {
-            double dur = T.CompKind switch { 1 => st == 0 ? Sd * 9 : Sd * 6, 2 => Sd * 3, 3 => Sd * 7, _ => Sd * 15 };
-            double vol = (kind == "break" ? 0.17 : 0.19) * hum();
-            for (int k = 0; k < ch.notes.Length; k++)
+            var pat = LofiTrack.CompPats[sec.CompPat];
+            foreach (var (pos, plen) in pat)
             {
-                if (k == 2 && ch.notes.Length > 4 && r() < 0.5) continue;
-                Keys(at + S(k * (0.008 + r() * 0.012)), Mf(ch.notes[k]), dur, vol, T.KeysKind, k % 2 == 0 ? -0.3 : 0.3, 0.35);
+                if (pos != st || (sec.CompPat == 7 && inBar % 2 == 1)) continue;
+                double vol = (sec.Kind == "break" ? 0.17 : 0.19) * hum();
+                for (int k = 0; k < ch.notes.Length; k++)
+                {
+                    if (k == 2 && ch.notes.Length > 4 && r() < 0.5) continue;
+                    Keys(at + S(k * (0.008 + r() * 0.012)), Mf(ch.notes[k]), Sd * plen, vol, T.KeysKind, k % 2 == 0 ? -0.3 : 0.3, 0.35);
+                }
             }
         }
 
-        // мелодия: в частях b, во второй части a и тихо в брейке
-        bool melody = kind is "b" or "a2" || (kind == "break" && inBar >= 2);
-        if (melody)
+        // мелодия
+        if (sec.Lead >= 0 && !(fill == 4 && st >= 8))
         {
-            int motif = kind == "b" ? (inBar / 2 % 2 == 0 ? 0 : 1) : kind == "a2" ? 2 : 1;
-            int m = T.Motifs[motif][(inBar % 2) * 16 + st];
+            int m = T.Motifs[sec.Lead][(inBar % 2) * 16 + st];
             if (m >= 0)
             {
                 if (r() < 0.12) m = Math.Clamp(m + (r() < 0.5 ? -1 : 1), 0, 9);
-                double vol = (kind == "break" ? 0.13 : 0.16) * hum();
-                Keys(at, Mf(T.Deg(m) + 24), Sd * (T.LeadKind == 4 ? 3 : 6), vol, T.LeadKind, -0.12, 0.5);
+                Keys(at, Mf(T.Deg(m) + 24), Sd * (T.LeadKind == 4 ? 3 : 6), sec.LeadVol * hum(), T.LeadKind, -0.12, 0.5);
             }
         }
     }
@@ -538,10 +667,11 @@ class LofiSynth : ISampleProvider
             if ((n & 511) == 0)
             {
                 cut += (cutTarget - cut) * 0.08;
+                level += (levelTarget - level) * 0.03;
                 master.Set('l', cut, SR);
             }
 
-            double mono = master.Run(((l + r) / 2 + echoed * 0.8) * 0.9) + vinyl + rain;
+            double mono = master.Run(((l + r) / 2 + echoed * 0.8) * 0.9) * level + vinyl + rain;
             mono = Math.Tanh(mono * 1.3) / 1.3;
             double side = (r - l) / 2 * 0.5;
             gain += (target - gain) * 0.00005f;
