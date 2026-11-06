@@ -715,7 +715,7 @@ class SettingsWindow : UI.FluentWindow
             var t = pet.Music.Synth?.Track;
             play.Content = L.T(pet.Music.On ? "music.stop" : "music.play");
             play.Icon = new UI.SymbolIcon { Symbol = pet.Music.On ? UI.SymbolRegular.MusicNoteOff224 : UI.SymbolRegular.Play24 };
-            now.Text = pet.Music.On && t != null ? $"{L.T("music.now")}: {t.Name} · {t.Key} {t.Mode} · {t.Bpm} BPM · {t.Style}" : L.T("music.off");
+            now.Text = pet.Music.On && t != null ? $"{L.T("music.now")}: {t.Name} · {t.Key} {t.Mode} · {t.Bpm} BPM · {LofiTrack.StyleName(t.Style, L.Russian)}" : L.T("music.off");
         }
         play.Click += (_, _) => { pet.ToggleMusic(); Update(); };
         next.Click += (_, _) => { pet.NextTrack(); Update(); };
@@ -725,7 +725,14 @@ class SettingsWindow : UI.FluentWindow
         var vol = new WC.Slider { Minimum = 0, Maximum = 1, Width = 200, Value = S.MusicVolume };
         vol.ValueChanged += (_, _) => { S.MusicVolume = (float)vol.Value; pet.Music.SetVolume(S.MusicVolume); };
         vol.LostMouseCapture += (_, _) => S.Save();
-        left.Children.Add(Card(L.T("card.lofi"), buttons, now, Row(L.T("music.volume"), vol)));
+        var styles = new[] { "any" }.Concat(LofiTrack.Styles).ToArray();
+        var style = Combo(styles.Select(st => LofiTrack.StyleName(st, L.Russian)).ToArray(), Array.IndexOf(styles, S.MusicStyle), i =>
+        {
+            S.MusicStyle = styles[i];
+            pet.Music.SetStyle(styles[i]);
+            Dispatcher.BeginInvoke(Update, WT.DispatcherPriority.Background);
+        }, 180);
+        left.Children.Add(Card(L.T("card.lofi"), buttons, now, Row(L.T("music.style"), style), Row(L.T("music.volume"), vol)));
 
         int[] mins = { 1, 2, 3, 5, 10, 15, 30 };
         left.Children.Add(Card(L.T("card.afk"),
@@ -801,8 +808,14 @@ class SettingsWindow : UI.FluentWindow
         head.Children.Add(del);
         stack.Children.Add(head);
 
-        stack.Children.Add(BlockView(sc, sc.When, -1));
-        for (int i = 0; i < sc.Do.Count; i++) stack.Children.Add(BlockView(sc, sc.Do[i], i));
+        stack.Children.Add(BlockView(sc, sc.When, -1, 0));
+        int depth = 0;
+        for (int i = 0; i < sc.Do.Count; i++)
+        {
+            if (sc.Do[i].Id == "end") depth = Math.Max(0, depth - 1);
+            stack.Children.Add(BlockView(sc, sc.Do[i], i, depth));
+            if (Blocks.Opens(sc.Do[i].Id)) depth++;
+        }
 
         var addBlock = new UI.Button { Content = L.T("scripts.block"), Icon = new UI.SymbolIcon { Symbol = UI.SymbolRegular.Add24 }, Padding = new W.Thickness(12, 5, 12, 5), Margin = new W.Thickness(24, 6, 0, 0) };
         addBlock.Click += (_, _) => AddBlockMenu(addBlock, sc);
@@ -816,7 +829,7 @@ class SettingsWindow : UI.FluentWindow
         };
     }
 
-    W.UIElement BlockView(PetScript sc, ScriptBlock b, int index)
+    W.UIElement BlockView(PetScript sc, ScriptBlock b, int index, int depth)
     {
         bool hat = index < 0;
         var def = Blocks.Def(b.Id) ?? (hat ? Blocks.Events[0] : Blocks.Actions[0]);
@@ -860,7 +873,18 @@ class SettingsWindow : UI.FluentWindow
             }
             tools.Children.Add(IconButton(UI.SymbolRegular.ArrowUp24, L.T("scripts.up"), () => Move(-1)));
             tools.Children.Add(IconButton(UI.SymbolRegular.ArrowDown24, L.T("scripts.down"), () => Move(1)));
-            tools.Children.Add(IconButton(UI.SymbolRegular.Dismiss24, L.T("scripts.delete"), () => { sc.Do.RemoveAt(index); S.Save(); RebuildScripts(); }));
+            tools.Children.Add(IconButton(UI.SymbolRegular.Dismiss24, L.T("scripts.delete"), () =>
+            {
+                // вместе с «повторить/всегда/если» убираем и его «конец»
+                if (Blocks.Opens(sc.Do[index].Id))
+                {
+                    int end = Blocks.MatchEnd(sc.Do, index);
+                    if (end < sc.Do.Count) sc.Do.RemoveAt(end);
+                }
+                sc.Do.RemoveAt(index);
+                S.Save();
+                RebuildScripts();
+            }));
             WC.Grid.SetColumn(tools, 1);
             grid.Children.Add(tools);
         }
@@ -873,7 +897,7 @@ class SettingsWindow : UI.FluentWindow
             BorderThickness = new W.Thickness(1),
             CornerRadius = hat ? new W.CornerRadius(16, 16, 6, 6) : new W.CornerRadius(6),
             Padding = new W.Thickness(12, 6, 6, 6),
-            Margin = hat ? new W.Thickness(0, 0, 0, 4) : new W.Thickness(24, 0, 0, 4),
+            Margin = hat ? new W.Thickness(0, 0, 0, 4) : new W.Thickness(24 + 28 * depth, 0, 0, 4),
             MinHeight = 40,
             Child = grid,
         };
@@ -909,6 +933,11 @@ class SettingsWindow : UI.FluentWindow
                 var ids = Looks.Accessories.Where(a => a.Id != "none").Select(a => a.Id).ToArray();
                 return Combo(ids.Select(id => L.T("acc." + id)).ToArray(), Array.IndexOf(ids, b.Str), i => b.Str = ids[i], 170);
             }
+            case ArgKind.Condition:
+            {
+                var ids = Blocks.Conditions;
+                return Combo(ids.Select(id => L.T("cond." + id)).ToArray(), Array.IndexOf(ids, b.Str), i => b.Str = ids[i], 220);
+            }
             default:
             {
                 var ids = Blocks.Emotes;
@@ -927,11 +956,17 @@ class SettingsWindow : UI.FluentWindow
                 Header = L.T("cat." + cat),
                 Icon = new System.Windows.Shapes.Ellipse { Width = 10, Height = 10, Fill = CatBrush(cat) },
             };
-            foreach (var d in Blocks.Actions.Where(a => a.Cat == cat))
+            foreach (var d in Blocks.Actions.Where(a => a.Cat == cat && a.Id != "end"))
             {
                 var item = new WC.MenuItem { Header = d.Text.Replace("{0}", "…") };
                 var def = d;
-                item.Click += (_, _) => { sc.Do.Add(Blocks.New(def)); S.Save(); RebuildScripts(); };
+                item.Click += (_, _) =>
+                {
+                    sc.Do.Add(Blocks.New(def));
+                    if (Blocks.Opens(def.Id)) sc.Do.Add(new ScriptBlock { Id = "end" });
+                    S.Save();
+                    RebuildScripts();
+                };
                 group.Items.Add(item);
             }
             menu.Items.Add(group);

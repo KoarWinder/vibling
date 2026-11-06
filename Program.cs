@@ -256,6 +256,7 @@ class Settings
     public bool AfkMusic { get; set; } = true;
     public int AfkMinutes { get; set; } = 3;
     public float MusicVolume { get; set; } = 0.5f;
+    public string MusicStyle { get; set; } = "any";
     public bool DanceToMusic { get; set; } = true;
     public List<PetScript> Scripts { get; set; } = new();
     public string Language { get; set; } = "auto";
