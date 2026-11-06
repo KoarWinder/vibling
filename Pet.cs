@@ -87,6 +87,7 @@ class PetForm : LayeredForm
 
     public PetForm(Settings settings)
     {
+        Stage = true;
         S = settings;
         using (var g0 = Graphics.FromHwnd(IntPtr.Zero)) U = g0.DpiX / 96f;
         Text = L.T("app");
@@ -562,16 +563,8 @@ class PetForm : LayeredForm
         if (hideUntil > 0 && time >= hideUntil) { hideUntil = -1; SetHidden(false); }
         if (fsHidden) return;
 
-        // пока стрелка спрятана из-за печати, окна не двигаем: иначе Windows снова показывает её на каждом сдвиге
-        bool hold = Native.PointerHidden() && st is not (St.Air or St.Drag) && !dragging;
-        float hx = x, hy = y, bx = ball?.X ?? 0, by = ball?.Y ?? 0;
         Step(dt);
         ball?.Step(dt);
-        if (hold && st is not (St.Air or St.Drag))
-        {
-            x = hx; y = hy;
-            if (ball != null && !ball.Held) { ball.X = bx; ball.Y = by; }
-        }
         if (!hidden) Render();
 
         saveT += dt;
@@ -810,12 +803,14 @@ class PetForm : LayeredForm
         }
     }
 
-    /// Иногда окна или проводник сбрасывают «поверх всех» — возвращаем его каждые полторы секунды.
+    /// Иногда окна или проводник сбрасывают «поверх всех». Возвращаем его, только если он правда слетел:
+    /// лишняя перестановка окон заставляет Windows показать спрятанную при печати стрелку.
     void KeepOnTop()
     {
         const uint flags = 0x0001 | 0x0002 | 0x0010;
-        if (Visible) Native.SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, flags);
-        if (ball != null && !ball.IsDisposed && ball.Visible) Native.SetWindowPos(ball.Handle, (IntPtr)(-1), 0, 0, 0, 0, flags);
+        static bool Lost(IntPtr h) => (Native.GetWindowLong(h, -20) & 0x8) == 0;
+        if (Visible && Lost(Handle)) Native.SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, flags);
+        if (ball != null && !ball.IsDisposed && ball.Visible && Lost(ball.Handle)) Native.SetWindowPos(ball.Handle, (IntPtr)(-1), 0, 0, 0, 0, flags);
     }
 
     public void ToggleMusic()
@@ -1752,6 +1747,7 @@ class BallForm : LayeredForm
 
     public BallForm(float u, float x, float y)
     {
+        Stage = true;
         U = u; X = x; Y = y;
         bmp = new Bitmap((int)Math.Ceiling(32 * U), (int)Math.Ceiling(32 * U), PixelFormat.Format32bppArgb);
         Text = "Мячик";
