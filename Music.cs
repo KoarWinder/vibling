@@ -218,7 +218,7 @@ class LofiSynth : ISampleProvider
     public volatile float Target;
     public bool Russian = true;
     public LofiTrack Track { get; private set; }
-    public double KickTime = -10, Now;
+    public double KickTime = -10, Now, Anchor;
     public double Bpm => Track?.Bpm ?? 84;
 
     readonly List<Voice> voices = new();
@@ -246,6 +246,7 @@ class LofiSynth : ISampleProvider
     {
         Track = LofiTrack.Make((uint)rnd.Next(), Russian);
         ts = 0;
+        Anchor = nextStep / (double)SR;
         masterCut = Track.Cut;
         master = new Biquad('l', masterCut, SR);
     }
@@ -410,13 +411,9 @@ class LofiPlayer
         if (!On && output != null && Synth.Gain < 0.0005f && output.PlaybackState == PlaybackState.Playing) output.Pause();
     }
 
-    /// Насколько сейчас «бьёт» бочка: 1 в момент удара, дальше затухает.
-    public float Pulse()
-    {
-        if (Synth == null || !On) return 0;
-        double age = Synth.Now - 0.15 - Synth.KickTime;
-        return age < 0 || age > 0.5 ? 0 : (float)Math.Exp(-age * 7);
-    }
+
+    /// Сколько долей прошло с начала трека (с поправкой на задержку вывода): дробная часть — где мы внутри доли.
+    public double BeatPos() => Synth == null ? 0 : Math.Max(0, Synth.Now - 0.15 - Synth.Anchor) * Synth.Bpm / 60;
 
     public void Dispose() { try { output?.Dispose(); } catch { } }
 }

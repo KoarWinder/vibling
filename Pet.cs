@@ -56,8 +56,9 @@ class PetForm : LayeredForm
     readonly LofiPlayer music = new();
     readonly ScriptRunner scripts = new();
     bool afk, afkMusic, party, beatHigh;
-    float topT, clockT, hideUntil = -1, beatPulse;
-    int beatCount;
+    float topT, clockT, hideUntil = -1, nod;
+    int beatCount, beatIdx;
+    double beatPos, lastBeatT, beatGap = 0.7;
 
     public LofiPlayer Music => music;
 
@@ -571,9 +572,25 @@ class PetForm : LayeredForm
         else if (!S.ZeroG && st == St.Float) { fSleep = false; StartAir(AirKind.Drop, vx, vy); }
         BallForm.ZeroG = S.ZeroG;
         party = music.On || (S.DanceToMusic && SysAudio.Playing);
-        beatPulse = music.On ? music.Pulse() : SysAudio.Beat;
-        if (beatPulse > 0.8f && !beatHigh) { beatHigh = true; beatCount++; }
-        else if (beatPulse < 0.4f) beatHigh = false;
+        if (music.On) beatPos = music.BeatPos();
+        else
+        {
+            // своя музыка: доли ловим по ударам в звуке, промежуток между ними сглаживаем
+            float hit = SysAudio.Beat;
+            if (hit > 0.8f && !beatHigh)
+            {
+                beatHigh = true;
+                double gap = time - lastBeatT;
+                if (gap > 0.3 && gap < 1.5) beatGap += (gap - beatGap) * 0.3;
+                lastBeatT = time;
+                beatIdx++;
+            }
+            else if (hit < 0.4f) beatHigh = false;
+            beatPos = beatIdx + Math.Min(0.999, (time - lastBeatT) / beatGap);
+        }
+        beatCount = (int)beatPos;
+        double frac = beatPos - Math.Floor(beatPos);
+        nod = (float)((1 - frac) * (1 - frac));
         if (party && st is St.Idle or St.Walk or St.Look or St.Sit or St.Stretch or St.Wave) Set(St.Party);
 
         float tsx = 1, tsy = 1;
@@ -598,9 +615,9 @@ class PetForm : LayeredForm
 
             case St.Party:
                 if (!party) { Set(St.Idle, 1); break; }
-                tsy = 1 - 0.12f * beatPulse;
-                tsx = 1 + 0.08f * beatPulse;
-                face = beatCount / 2 % 2 == 0 ? 1 : -1;
+                tsy = 1 - 0.05f * nod;
+                tsx = 1 + 0.03f * nod;
+                angle = (float)Math.Sin(beatPos * Math.PI) * 4;
                 break;
 
             case St.Float:
@@ -730,7 +747,7 @@ class PetForm : LayeredForm
                 break;
         }
 
-        if (st != St.Float && (st != St.Air || air != AirKind.Flip)) angle *= (float)Math.Exp(-dt * 14);
+        if (st is not (St.Float or St.Party) && (st != St.Air || air != AirKind.Flip)) angle *= (float)Math.Exp(-dt * 14);
 
         sqX += (tsx - sqX) * Math.Min(1, dt * 12);
         sqY += (tsy - sqY) * Math.Min(1, dt * 12);
@@ -994,7 +1011,7 @@ class PetForm : LayeredForm
                 faceByMotion = false;
                 face = (int)(faT / 0.55f) % 2 == 0 ? 1 : -1;
                 break;
-            case FA.Dance: damping = 1.2f; tsy = 1 - 0.12f * beatPulse; tsx = 1 + 0.08f * beatPulse; break;
+            case FA.Dance: damping = 1.2f; if (party) { tsy = 1 - 0.05f * nod; tsx = 1 + 0.03f * nod; } break;
             case FA.Swim: ax += face * 110 * U; damping = 0.9f; break;
             case FA.SlowSpin: damping = 1.5f; break;
             case FA.Stretch:
@@ -1386,18 +1403,11 @@ class PetForm : LayeredForm
                 break;
             case St.Wave: pose.Arms = Arms.Wave; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; break;
             case St.Party:
-            {
-                int move = beatCount / 8 % 4, b = beatCount % 2;
-                pose.Eyes = beatCount / 4 % 3 == 2 ? Eyes.Closed : Eyes.Happy;
-                switch (move)
-                {
-                    case 0: pose.Arms = b == 0 ? Arms.Up : Arms.Side; break;
-                    case 1: pose.Arms = Arms.Wave; pose.Legs = Legs.Walk; break;
-                    case 2: pose.Arms = Arms.Swing; pose.Legs = Legs.Run; break;
-                    default: pose.Arms = b == 0 ? Arms.Out : Arms.Up; break;
-                }
+                // спокойный лоу-фай вайб: кивает с закрытыми глазами, иногда улыбается, каждые 16 долей садится
+                pose.Sit = beatCount / 16 % 2 == 1;
+                pose.Eyes = beatCount % 8 == 7 ? Eyes.Happy : Eyes.Closed;
+                if (beatCount % 32 == 31) pose.Arms = Arms.Up;
                 break;
-            }
             case St.Float:
                 pose.Legs = Legs.Dangle;
                 if (bonkT > 0 || squintT > 0) { pose.Eyes = Eyes.Squint; pose.Arms = Arms.Out; }
@@ -1417,6 +1427,7 @@ class PetForm : LayeredForm
                     case FA.Hover: if (Math.Abs(aspin) > 25) { pose.Arms = Arms.Out; pose.Mouth = Mouth.O; } break;
                     case FA.Confused: pose.Mouth = Mouth.O; pose.LookX = 1; pose.Eyes = blinkT < 0 ? Eyes.Blink : Eyes.Open; break;
                     case FA.Dance:
+                        if (party) { pose.Eyes = beatCount % 8 == 7 ? Eyes.Happy : Eyes.Closed; break; }
                         pose.Arms = ((int)(time * 2.5f) % 4) switch { 0 => Arms.Up, 1 => Arms.Wave, 2 => Arms.Up, _ => Arms.Swing };
                         if ((int)(time * 0.5f) % 3 == 0) pose.Eyes = Eyes.Happy;
                         break;
