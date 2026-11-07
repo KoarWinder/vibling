@@ -14,7 +14,7 @@ class Particle
     public Color C;
 }
 
-enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn, Float, Party, Peek, PeekSide, Fart }
+enum St { Idle, Walk, Run, Code, Sleep, Drag, Air, Land, Splat, Dizzy, Slide, Happy, Eat, Crouch, Teeter, Stretch, Look, Dance, Sit, Wave, Yawn, Float, Party, Peek, PeekSide, Fart, Angry, Gift }
 enum AirKind { Drop, Jump, Flip }
 
 class PetForm : LayeredForm
@@ -47,7 +47,7 @@ class PetForm : LayeredForm
     float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
     float lastInteract, lastKeyT = -999;
     int face = 1, paw;
-    float fFartT;
+    float fFartT, fAngryT;
     bool farted;
     float aspin, bonkT, fHappyT, fEatT, fDizzyT, hicT, squintT, fxT, faT, faDur, curSpeed;
     FA fa;
@@ -67,7 +67,9 @@ class PetForm : LayeredForm
 
     float sink, peekX, peekEdge;
     int peekDir;
-    bool peekAfterWalk;
+    bool peekAfterWalk, giftAfterWalk, angryPending;
+    readonly List<float> throws = new(), pokes = new();
+    float puffT;
 
     enum FA
     {
@@ -355,6 +357,12 @@ class PetForm : LayeredForm
                 tvx = Math.Clamp((b.p.X - a.p.X) / dt, -2600 * U, 2600 * U);
                 tvy = Math.Clamp((b.p.Y - a.p.Y) / dt, -2600 * U, 2600 * U);
             }
+            if (MathF.Sqrt(tvx * tvx + tvy * tvy) > 900 * U)
+            {
+                throws.Add(time);
+                throws.RemoveAll(t => time - t > 30);
+                if (throws.Count >= 3) { throws.Clear(); angryPending = true; }
+            }
             if (S.ZeroG) StartFloat(tvx, tvy);
             else StartAir(AirKind.Drop, tvx, tvy);
         }
@@ -367,7 +375,7 @@ class PetForm : LayeredForm
     }
 
     bool Grounded => st is not (St.Drag or St.Air or St.Float);
-    bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter or St.Peek or St.PeekSide or St.Fart;
+    bool Busy => st is St.Splat or St.Dizzy or St.Land or St.Slide or St.Crouch or St.Teeter or St.Peek or St.PeekSide or St.Fart or St.Angry or St.Gift;
 
     void Set(St s, float dur = 0) { if (s != St.Stretch) waking = false; st = s; stT = 0; stDur = dur; }
     float Rand(float a, float b) => a + (float)rnd.NextDouble() * (b - a);
@@ -387,6 +395,10 @@ class PetForm : LayeredForm
         if (st != St.Float && (!Grounded || Busy)) return;
         S.Pets++;
         if (st == St.Sleep) { WakeUp(); return; }
+        pokes.Add(time);
+        pokes.RemoveAll(t => time - t > 20);
+        if (st != St.Float && pokes.Count(t => time - t < 3) >= 6) { pokes.Clear(); Set(St.Angry, 3.2f); return; }
+        if (pokes.Count >= 4 && rnd.NextDouble() < 0.35) { pokes.Clear(); Gift(); return; }
         if (st == St.Float) { fSleep = false; fHappyT = 1.2f; }
         else { Set(St.Happy, 1.2f); sqX = 1.15f; sqY = 0.85f; }
         for (int i = 0; i < 5; i++)
@@ -505,6 +517,7 @@ class PetForm : LayeredForm
         float act = new[] { 0.55f, 1f, 1.6f }[Math.Clamp(S.Mood, 0, 2)];
         var cur = Cursor.Position;
 
+        if (angryPending) { angryPending = false; Set(St.Angry, 3.2f); return; }
         if (S.Follow) { targetX = cur.X; speed = 110 * U; goOff = false; Set(St.Walk); return; }
         if (S.SleepWhenIdle && time - lastInteract > 300 && time - lastKeyT > 300) { Set(St.Yawn, 1.4f); return; }
         if (ball != null && rnd.NextDouble() < 0.6) { Set(St.Run); return; }
@@ -529,6 +542,8 @@ class PetForm : LayeredForm
             (0.8f * act, () => { targetX = Math.Clamp(cur.X, L, R); speed = 130 * U; goOff = false; Set(St.Walk); }),
             (0.25f * act, Flip),
             (0.18f, Fart),
+            (0.14f * new[] { 1.4f, 1f, 0.6f }[Math.Clamp(S.Mood, 0, 2)], Gift),
+            (0.07f * new[] { 0.5f, 1f, 1.6f }[Math.Clamp(S.Mood, 0, 2)], () => Set(St.Angry, 3.2f)),
             (0.5f * act, HideAndPeek),
         };
         float sum = options.Sum(o => o.w), pick = Rand(0, sum);
@@ -612,7 +627,7 @@ class PetForm : LayeredForm
         beatCount = (int)beatPos;
         double frac = beatPos - Math.Floor(beatPos);
         nod = (float)((1 - frac) * (1 - frac));
-        if (party && !peekAfterWalk && !waking && st is St.Idle or St.Walk or St.Look or St.Sit or St.Stretch or St.Wave) Set(St.Party);
+        if (party && !peekAfterWalk && !giftAfterWalk && !waking && st is St.Idle or St.Walk or St.Look or St.Sit or St.Stretch or St.Wave) Set(St.Party);
 
         float tsx = 1, tsy = 1;
 
@@ -626,6 +641,7 @@ class PetForm : LayeredForm
                 y = cur.Y - grabOff.Y;
                 trail.Enqueue((time, cur));
                 while (trail.Count > 0 && time - trail.Peek().t > 0.08f) trail.Dequeue();
+                if (stT > 0.3f) { angle = MathF.Sin(stT * 12) * 7; tsx = 0.95f; tsy = 1.06f; }
                 if ((MouseButtons & MouseButtons.Left) == 0 && mouseDown) OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
                 break;
             }
@@ -636,6 +652,28 @@ class PetForm : LayeredForm
 
             case St.Peek:
                 (tsx, tsy) = StepPeek(dt);
+                break;
+
+            case St.Angry:
+            {
+                // топает, пыхтит паром и смотрит на курсор; в конце обиженно отворачивается
+                float ph = stT % 0.42f;
+                if (stT < 2.5f)
+                {
+                    face = cur.X < x ? -1 : 1;
+                    if (ph < 0.09f) { tsx = 1.14f; tsy = 0.86f; }
+                    puffT -= dt;
+                    if (puffT <= 0) { puffT = 0.45f; Steam(); }
+                }
+                else if (stT < 2.6f) face = cur.X < x ? 1 : -1;
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
+                break;
+            }
+
+            case St.Gift:
+                face = cur.X < x ? -1 : 1;
+                if (stT > 1.8f && !farted) { farted = true; GiveFlower(); }
+                if (stT > stDur) Set(St.Idle, Rand(1, 2));
                 break;
 
             case St.Fart:
@@ -677,6 +715,7 @@ class PetForm : LayeredForm
                 if (Math.Abs(dx) < 3 * U)
                 {
                     if (peekAfterWalk) { peekAfterWalk = false; StartPeekSide(); }
+                    else if (giftAfterWalk) { giftAfterWalk = false; StartGift(); }
                     else Set(St.Idle, S.Follow ? 0.6f : Rand(1, 3));
                     break;
                 }
@@ -789,7 +828,7 @@ class PetForm : LayeredForm
                 break;
         }
 
-        if (st is not (St.Float or St.Party) && (st != St.Air || air != AirKind.Flip)) angle *= (float)Math.Exp(-dt * 14);
+        if (st is not (St.Float or St.Party or St.Drag) && (st != St.Air || air != AirKind.Flip)) angle *= (float)Math.Exp(-dt * 14);
 
         sqX += (tsx - sqX) * Math.Min(1, dt * 12);
         sqY += (tsy - sqY) * Math.Min(1, dt * 12);
@@ -934,6 +973,8 @@ class PetForm : LayeredForm
             case "musicoff": music.Stop(); afkMusic = false; break;
             case "nexttrack": NextTrack(); break;
             case "fart": Fart(); break;
+            case "angry": if (!fl && Grounded && !Busy) Set(St.Angry, 3.2f); break;
+            case "gift": Gift(); break;
             case "peek": if (!fl && Grounded && !Busy) HideAndPeek(); break;
         }
     }
@@ -1023,6 +1064,42 @@ class PetForm : LayeredForm
         farted = false;
         Set(St.Fart, 3.4f);
         Puff();
+    }
+
+    /// Добрый порыв: подходит к курсору, стесняясь протягивает цветочек и отпускает его тебе.
+    void Gift()
+    {
+        if (hidden) return;
+        if (st == St.Float) { GiveFlower(); fHappyT = 1.6f; return; }
+        if (!Grounded || Busy || st == St.Sleep) return;
+        var (L, R) = Span();
+        float tx = Math.Clamp(Cursor.Position.X, L, R);
+        farted = false;
+        if (Math.Abs(tx - x) > 40 * U)
+        {
+            targetX = tx; speed = 95 * U; goOff = false; giftAfterWalk = true;
+            Set(St.Walk);
+        }
+        else StartGift();
+    }
+
+    void StartGift() { farted = false; Set(St.Gift, 3.2f); }
+
+    void GiveFlower()
+    {
+        parts.Add(new Particle { Kind = 9, X = FX + face * 9 * P, Y = FY - 11 * P, VX = face * 1.2f * P, VY = -2.2f * P, Life = 2.6f, Max = 2.6f });
+        for (int i = 0; i < 3; i++)
+            parts.Add(new Particle { Kind = 0, X = FX + Rand(-4, 6) * face * P, Y = FY - 13 * P, VX = Rand(-3, 3) * P, VY = Rand(-9, -5) * P, Life = 1.3f, Max = 1.3f, C = Color.FromArgb(255, 111, 168) });
+    }
+
+    void Steam()
+    {
+        for (int side = -1; side <= 1; side += 2)
+            parts.Add(new Particle
+            {
+                Kind = 7, X = FX + side * 6 * P, Y = FY - 11 * P, VX = side * Rand(1.5f, 3) * P, VY = Rand(-6, -4) * P,
+                Life = 0.8f, Max = 0.8f, Size = 1.2f * P, C = Color.FromArgb(236, 236, 242),
+            });
     }
 
     void Puff()
@@ -1303,6 +1380,7 @@ class PetForm : LayeredForm
         bonkT -= dt;
         fHappyT -= dt;
         fFartT -= dt;
+        fAngryT -= dt;
         fEatT -= dt;
         fDizzyT -= dt;
         squintT -= dt;
@@ -1540,7 +1618,11 @@ class PetForm : LayeredForm
                 pose.LookX = 0; pose.LookY = 1;
                 break;
             case St.Sleep: pose.Sit = true; pose.Eyes = Eyes.Closed; break;
-            case St.Drag: pose.Legs = Legs.Dangle; pose.Arms = Arms.Flail; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; break;
+            case St.Drag:
+                // схватили — сначала удивился, потом «отпусти!»: тянется к земле, сучит ножками, жмурится
+                if (stT < 0.3f) { pose.Legs = Legs.Dangle; pose.Arms = Arms.Side; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; }
+                else { pose.Legs = Legs.Run; pose.Arms = Arms.Struggle; pose.Eyes = Eyes.Squint; pose.Mouth = Mouth.O; }
+                break;
             case St.Air:
                 if (air == AirKind.Flip) { pose.Legs = Legs.Tuck; pose.Arms = Arms.Up; pose.Eyes = Eyes.Happy; }
                 else if (air == AirKind.Jump) { pose.Legs = Legs.Tuck; pose.Arms = Arms.Up; if (vy > 0) pose.Eyes = Eyes.Wide; }
@@ -1572,6 +1654,17 @@ class PetForm : LayeredForm
                 pose.Legs = Legs.Run; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile;
                 break;
             case St.Wave: pose.Arms = Arms.Wave; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; break;
+            case St.Angry:
+                pose.Eyes = stT > 2.5f ? Eyes.Closed : Eyes.Angry;
+                pose.Mouth = Mouth.Frown;
+                pose.Legs = stT < 2.5f && stT % 0.42f < 0.12f ? Legs.Brace : Legs.Stand;
+                break;
+            case St.Gift:
+                pose.Blush = true;
+                if (stT < 0.5f) { pose.Eyes = Eyes.Closed; pose.LookY = 1; }
+                else if (stT < 1.8f) { pose.Flower = true; pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; }
+                else { pose.Eyes = Eyes.Happy; pose.Mouth = Mouth.Smile; pose.Arms = Arms.Up; }
+                break;
             case St.Fart:
                 if (stT < 0.15f) pose.Eyes = Eyes.Squint;
                 else if (stT < 0.7f) { pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; }
@@ -1619,6 +1712,7 @@ class PetForm : LayeredForm
                     pose.LookX = 0; pose.LookY = 1;
                 }
                 else if (fEatT > 0 || fa == FA.Snack) { pose.Eyes = Eyes.Happy; pose.Blush = true; pose.Mouth = Mouth.Chew; }
+                else if (fAngryT > 0) { pose.Eyes = Eyes.Angry; pose.Mouth = Mouth.Frown; }
                 else if (fFartT > 0)
                 {
                     pose.Blush = true; pose.LookY = 1; pose.Mouth = Mouth.Smile;
@@ -1790,6 +1884,18 @@ class PetForm : LayeredForm
                 g.FillRectangle(cb, x0 + s / 2, y0 - s / 2 + P, P, MathF.Max(P, s - 2 * P));
                 break;
             }
+            case 9: // цветочек: розовые лепестки, жёлтая серединка, стебелёк
+            {
+                float x0 = MathF.Round(p.X / P) * P, y0 = MathF.Round((p.Y + MathF.Sin(time * 4) * 0.6f * P) / P) * P;
+                using var ob = new SolidBrush(Color.FromArgb(alpha, skin.Outline));
+                using var pb = new SolidBrush(Color.FromArgb(alpha, 255, 110, 170));
+                using var yb = new SolidBrush(Color.FromArgb(alpha, 255, 208, 72));
+                using var gb = new SolidBrush(Color.FromArgb(alpha, 96, 196, 110));
+                (int c, int r, SolidBrush b)[] cells = { (1, 0, pb), (0, 1, pb), (2, 1, pb), (1, 2, pb), (1, 1, yb), (1, 3, gb), (1, 4, gb), (2, 3, gb) };
+                foreach (var (c, r, _) in cells) { g.FillRectangle(ob, x0 + (c - 1) * P - P, y0 + r * P, 3 * P, P); g.FillRectangle(ob, x0 + (c - 1) * P, y0 + (r - 1) * P, P, 3 * P); }
+                foreach (var (c, r, b) in cells) g.FillRectangle(b, x0 + (c - 1) * P, y0 + r * P, P, P);
+                break;
+            }
             case 8: // капелька пота
             {
                 using var ob = new SolidBrush(Color.FromArgb(alpha, skin.Outline));
@@ -1822,10 +1928,11 @@ class BallForm : LayeredForm
     public bool Held { get; private set; }
     public bool Grounded { get; private set; }
     public static bool ZeroG;
-    public float Rad => R * U;
+    public float Rad => N * Cell / 2;
     public event Action Removed, Thrown;
 
     readonly float U, R = 13, Cell;
+    readonly int N;
     readonly Bitmap bmp;
     readonly Stopwatch sw = Stopwatch.StartNew();
     readonly Queue<(float t, Point p)> trail = new();
@@ -1836,7 +1943,10 @@ class BallForm : LayeredForm
     {
         Stage = true;
         U = u; X = x; Y = y; Cell = Math.Max(1, cell);
-        bmp = new Bitmap((int)Math.Ceiling(32 * U), (int)Math.Ceiling(32 * U), PixelFormat.Format32bppArgb);
+        // мячик из нечётного числа клеток (не меньше 7), картинка под него с запасом на обводку
+        N = Math.Max(7, (int)Math.Round(2 * R * U / Cell)) | 1;
+        int side = (int)Math.Ceiling((N + 2) * Cell) + 2;
+        bmp = new Bitmap(side, side, PixelFormat.Format32bppArgb);
         Text = "Мячик";
     }
 
@@ -1953,8 +2063,7 @@ class BallForm : LayeredForm
         g.SmoothingMode = SmoothingMode.None;
         // пиксельный пляжный мячик в той же сетке, что и клопус: три дольки крутятся вместе с мячом
         float c = Cell;
-        int n = Math.Max(7, (int)Math.Round(2 * R * U / c)) | 1;
-        while ((n + 2) * c > bmp.Width && n > 7) n -= 2;
+        int n = N;
         float mid = (n - 1) / 2f, rr = n / 2f - 0.2f, ox = bmp.Width / 2f - n * c / 2f, oy = bmp.Height / 2f - n * c / 2f;
         bool In(int i, int j) => i >= 0 && j >= 0 && i < n && j < n && (i - mid) * (i - mid) + (j - mid) * (j - mid) <= rr * rr;
         Color white = Color.FromArgb(255, 250, 244), outline = Color.FromArgb(42, 24, 18);
@@ -1989,6 +2098,6 @@ class BallForm : LayeredForm
             if (In(hx, hy)) g.FillRectangle(hl, ox + hx * c, oy + hy * c, c, c);
             if (In(hx + 1, hy)) g.FillRectangle(hl, ox + (hx + 1) * c, oy + hy * c, c, c);
         }
-        Present(bmp, (int)Math.Round(X - 16 * U), (int)Math.Round(Y - 16 * U));
+        Present(bmp, (int)Math.Round(X - bmp.Width / 2f), (int)Math.Round(Y - bmp.Height / 2f));
     }
 }
