@@ -57,14 +57,14 @@ static class Looks
     public static IEnumerable<string> Ordered(IEnumerable<string> wear) => DrawOrder.Where(wear.Contains);
 }
 
-enum Legs { Stand, Walk, Run, Dangle, Tuck, Brace, Skid, Hidden }
-enum Arms { Side, Swing, Up, Flail, Wave, Typing, Out, Umbrella }
-enum Eyes { Open, Blink, Happy, Closed, Wide, Squint }
-enum Mouth { None, Smile, O, Open, Chew, Yawn }
+enum Legs { Stand, Walk, Run, Dangle, Drift, Tuck, Brace, Skid, Hidden }
+enum Arms { Side, Swing, Up, Flail, Wave, Typing, Out, Umbrella, Struggle }
+enum Eyes { Open, Blink, Happy, Closed, Wide, Squint, Angry }
+enum Mouth { None, Smile, O, Open, Chew, Yawn, Frown }
 
 class Pose
 {
-    public bool Sit, Laptop, LaptopLit, Blush, Umbrella;
+    public bool Sit, Laptop, LaptopLit, Blush, Umbrella, Flower;
     public Legs Legs;
     public Arms Arms;
     public Eyes Eyes;
@@ -74,7 +74,7 @@ class Pose
 
     public void Reset(float phase)
     {
-        Sit = Laptop = LaptopLit = Blush = Umbrella = false;
+        Sit = Laptop = LaptopLit = Blush = Umbrella = Flower = false;
         Legs = Legs.Stand; Arms = Arms.Side; Eyes = Eyes.Open; Mouth = Mouth.None;
         LookX = LookY = 0; Paw = -1; Phase = phase;
     }
@@ -147,6 +147,10 @@ static class Sprite
                         len = i % 2 == ph2(p.Legs == Legs.Run ? 14 : 9) ? 2 : 1;
                         break;
                     case Legs.Dangle: len = 2 + ((int)(p.Phase * 5) + i) % 2; break;
+                    case Legs.Drift:
+                        len = i is 1 or 2 ? 3 : 2;
+                        if (p.Phase % 5f < 0.4f && (int)(p.Phase / 5f) % 4 == i) len++;
+                        break;
                     case Legs.Tuck: len = 1; break;
                 }
                 Rect(cols[i], 10, cols[i], 9 + len, s.Shade);
@@ -183,6 +187,13 @@ static class Sprite
             case Arms.Umbrella:
                 Rect(1, 6 + by, 2, 7 + by, s.Body); Rect(15, 2, 16, 4, s.Body);
                 break;
+            case Arms.Struggle:
+            {
+                int f = ph2(7);
+                Rect(1, 6 + by, 2, 7 + by, s.Body); Rect(f, 8 + by, f + 1, 9 + by, s.Body);
+                Rect(15, 6 + by, 16, 7 + by, s.Body); Rect(16 - f, 8 + by, 17 - f, 9 + by, s.Body);
+                break;
+            }
             case Arms.Swing:
             {
                 int d = ph2(9);
@@ -217,6 +228,10 @@ static class Sprite
                 Cell(5, 4 + by, s.Eye); Cell(6, 5 + by, s.Eye); Cell(5, 6 + by, s.Eye);
                 Cell(12, 4 + by, s.Eye); Cell(11, 5 + by, s.Eye); Cell(12, 6 + by, s.Eye);
                 break;
+            case Eyes.Angry:
+                Cell(5, 3 + by, s.Eye); Cell(6, 4 + by, s.Eye); Cell(12, 3 + by, s.Eye); Cell(11, 4 + by, s.Eye);
+                Rect(6 + lc, 5 + by, 6 + lc, 6 + by, s.Eye); Rect(11 + lc, 5 + by, 11 + lc, 6 + by, s.Eye);
+                break;
         }
 
         Color m = s.Outline;
@@ -226,6 +241,7 @@ static class Sprite
             case Mouth.Open: Rect(8, 8 + by, 9, 8 + by, m); break;
             case Mouth.Chew: if (ph2(8) == 0) Rect(8, 7 + by, 9, 8 + by, m); else Rect(8, 8 + by, 9, 8 + by, m); break;
             case Mouth.Yawn: Rect(7, 7 + by, 10, 8 + by, m); break;
+            case Mouth.Frown: Rect(8, 7 + by, 9, 7 + by, m); Cell(7, 8 + by, m); Cell(10, 8 + by, m); break;
         }
         if (p.Blush) { Cell(4, 7 + by, BlushC); Cell(13, 7 + by, BlushC); }
 
@@ -320,6 +336,13 @@ static class Sprite
                 break;
         }
 
+        if (p.Flower)
+        {
+            Rect(15, 6 + by, 17, 7 + by, s.Body);
+            Rect(18, 3 + by, 18, 6 + by, Green); Cell(19, 4 + by, Green);
+            Rect(17, -1 + by, 19, 1 + by, Pink); Cell(16, 0 + by, Pink); Cell(20, 0 + by, Pink); Cell(18, -2 + by, Pink); Cell(18, 2 + by, Pink);
+            Cell(18, 0 + by, Gold);
+        }
         if (p.Laptop)
         {
             Color lid = s.IsDark ? Silver : Metal, deck = s.IsDark ? SilverLight : MetalLight;

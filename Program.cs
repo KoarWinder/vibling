@@ -69,6 +69,19 @@ static class Native
     [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint Size, Time; }
     [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
 
+    [StructLayout(LayoutKind.Sequential)] public struct RECTI { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct ULWINFO
+    {
+        public int Size; public IntPtr DstDc; public POINT* Dst; public SIZE* Sz; public IntPtr SrcDc; public POINT* Src;
+        public uint Key; public BLENDFUNCTION* Blend; public uint Flags; public RECTI* Dirty;
+    }
+    [DllImport("user32.dll")] public static extern unsafe bool UpdateLayeredWindowIndirect(IntPtr h, ULWINFO* info);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BITMAPINFOHEADER { public int Size, Width, Height; public short Planes, BitCount; public int Compression, SizeImage, XPels, YPels, ClrUsed, ClrImportant; }
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER bi, uint usage, out IntPtr bits, IntPtr section, uint offset);
+    [DllImport("gdi32.dll")] public static extern bool GdiFlush();
+
     public static double IdleSeconds()
     {
         var i = new LASTINPUTINFO { Size = 8 };
@@ -256,6 +269,7 @@ class Settings
     public bool AfkMusic { get; set; } = true;
     public int AfkMinutes { get; set; } = 3;
     public float MusicVolume { get; set; } = 0.5f;
+    public string MusicStyle { get; set; } = "any";
     public bool DanceToMusic { get; set; } = true;
     public List<PetScript> Scripts { get; set; } = new();
     public string Language { get; set; } = "auto";
@@ -392,8 +406,87 @@ class LayeredForm : Form
 
     protected override bool ShowWithoutActivation => true;
 
+    protected bool Stage;
+    Rectangle vs;
+    IntPtr stageDc, stageDib, stageOld;
+    Bitmap canvas;
+    Rectangle prevRect;
+    bool stageReady, displayHooked;
+
+    void FreeStage()
+    {
+        canvas?.Dispose(); canvas = null;
+        if (stageDc != IntPtr.Zero)
+        {
+            Native.SelectObject(stageDc, stageOld);
+            Native.DeleteObject(stageDib);
+            Native.DeleteDC(stageDc);
+            stageDc = IntPtr.Zero;
+        }
+        stageReady = false;
+    }
+
+    unsafe void InitStage(byte alpha)
+    {
+        FreeStage();
+        if (!displayHooked)
+        {
+            displayHooked = true;
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
+        }
+        vs = SystemInformation.VirtualScreen;
+        var bi = new Native.BITMAPINFOHEADER { Size = 40, Width = vs.Width, Height = -vs.Height, Planes = 1, BitCount = 32 };
+        stageDc = Native.CreateCompatibleDC(IntPtr.Zero);
+        stageDib = Native.CreateDIBSection(stageDc, ref bi, 0, out IntPtr bits, IntPtr.Zero, 0);
+        stageOld = Native.SelectObject(stageDc, stageDib);
+        canvas = new Bitmap(vs.Width, vs.Height, vs.Width * 4, System.Drawing.Imaging.PixelFormat.Format32bppPArgb, bits);
+        prevRect = Rectangle.Empty;
+
+        var dst = new Native.POINT(vs.Left, vs.Top);
+        var size = new Native.SIZE(vs.Width, vs.Height);
+        var src = new Native.POINT(0, 0);
+        var blend = new Native.BLENDFUNCTION { SourceConstantAlpha = alpha, AlphaFormat = 1 };
+        var info = new Native.ULWINFO { Size = sizeof(Native.ULWINFO), Dst = &dst, Sz = &size, SrcDc = stageDc, Src = &src, Blend = &blend, Flags = 2 };
+        Native.UpdateLayeredWindowIndirect(Handle, &info);
+        stageReady = true;
+    }
+
+    void OnDisplayChanged(object sender, EventArgs e) => stageReady = false;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (displayHooked) Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
+        FreeStage();
+        base.Dispose(disposing);
+    }
+
+    unsafe void PresentStage(Bitmap bmp, int x, int y, byte alpha)
+    {
+        if (!stageReady) InitStage(alpha);
+        var bounds = new Rectangle(0, 0, vs.Width, vs.Height);
+        var r = Rectangle.Intersect(new Rectangle(x - vs.Left, y - vs.Top, bmp.Width, bmp.Height), bounds);
+        using (var g = Graphics.FromImage(canvas))
+        {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            if (!prevRect.IsEmpty) { g.SetClip(prevRect); g.Clear(Color.Transparent); g.ResetClip(); }
+            g.DrawImage(bmp, new Rectangle(x - vs.Left, y - vs.Top, bmp.Width, bmp.Height), 0, 0, bmp.Width, bmp.Height, GraphicsUnit.Pixel);
+        }
+        Native.GdiFlush();
+        var dirty = prevRect.IsEmpty ? r : r.IsEmpty ? prevRect : Rectangle.Union(prevRect, r);
+        prevRect = r;
+        if (dirty.IsEmpty) return;
+        var rc = new Native.RECTI { L = dirty.Left, T = dirty.Top, R = dirty.Right, B = dirty.Bottom };
+        var size = new Native.SIZE(vs.Width, vs.Height);
+        var src = new Native.POINT(0, 0);
+        var blend = new Native.BLENDFUNCTION { SourceConstantAlpha = alpha, AlphaFormat = 1 };
+        var info = new Native.ULWINFO { Size = sizeof(Native.ULWINFO), Sz = &size, SrcDc = stageDc, Src = &src, Blend = &blend, Flags = 2, Dirty = &rc };
+        Native.UpdateLayeredWindowIndirect(Handle, &info);
+    }
+
     public void Present(Bitmap bmp, int x, int y, byte alpha = 255)
     {
+        if (Stage) { PresentStage(bmp, x, y, alpha); return; }
         IntPtr screenDc = Native.GetDC(IntPtr.Zero);
         IntPtr memDc = Native.CreateCompatibleDC(screenDc);
         IntPtr hBmp = bmp.GetHbitmap(Color.FromArgb(0));

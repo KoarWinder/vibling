@@ -5,13 +5,14 @@
     <TargetFramework>net7.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Vibling</AssemblyName>
     <RootNamespace>Vibling</RootNamespace>
     <RollForward>Major</RollForward>
     <Product>Vibling</Product>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <ApplicationIcon>Vibling.ico</ApplicationIcon>
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>

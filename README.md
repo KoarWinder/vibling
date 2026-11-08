@@ -14,6 +14,12 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 - Chases a ball you can throw around.
 - 9 skins plus your own colors for body, eyes and outline.
 - 17 accessories, wear as many as you like at once.
+- Hides behind windows and the screen edge, peeks out and waves.
+- Has moods: gets angry if you throw or poke him too much, gives you a flower when he's happy, sometimes farts and gets embarrassed.
+- Zero gravity: floats, tumbles, dances and bounces off screen edges.
+- Lo-fi generator with 6 styles. Every track is new, it can play while you're away, and Vibling vibes to it.
+- Dances to the music playing on your speakers.
+- Scripts: build behavior from blocks like in Scratch, with repeat and if.
 - Hides in fullscreen apps (games, videos, F11) or keeps walking at the bottom of the screen.
 - 4 sizes, 3 personalities, English and Russian.
 
@@ -58,6 +64,12 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 - Бегает за мячиком.
 - 9 скинов и свой цвет: тело, глаза и обводка.
 - 17 аксессуаров, можно надевать сколько угодно сразу.
+- Прячется за окнами и краем экрана, выглядывает и машет.
+- У него бывает настроение: злится, если часто бросать или тыкать, дарит цветочек, когда ему хорошо, иногда пукает и стесняется.
+- Невесомость: летает, кувыркается, танцует и отскакивает от краёв экрана.
+- Генератор лоу-фая с 6 стилями. Каждый трек новый, может играть, пока вас нет, а Vibling кайфует под него.
+- Танцует под музыку из ваших колонок.
+- Сценарии: поведение собирается из блоков, как в Scratch, с повторами и условиями.
 - Прячется в полноэкранных приложениях (игры, видео, F11) или ходит по низу экрана.
 - 4 размера, 3 характера, русский и английский язык.
 

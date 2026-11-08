@@ -1,6 +1,6 @@
 namespace Vibling;
 
-enum ArgKind { None, Number, Skin, Accessory, Emote, Time }
+enum ArgKind { None, Number, Skin, Accessory, Emote, Time, Condition }
 
 record BlockDef(string Id, string Cat, ArgKind Arg, double Default, string Ru, string En)
 {
@@ -69,19 +69,55 @@ static class Blocks
         new("musicoff", "sound", ArgKind.None, 0, "Выключить музыку", "Stop the music"),
         new("nexttrack", "sound", ArgKind.None, 0, "Следующий трек", "Next track"),
 
+        new("peek", "behavior", ArgKind.None, 0, "Спрятаться и выглянуть", "Hide and peek"),
+        new("fart", "behavior", ArgKind.None, 0, "Пукнуть", "Fart"),
+        new("angry", "behavior", ArgKind.None, 0, "Разозлиться", "Get angry"),
+        new("gift", "behavior", ArgKind.None, 0, "Подарить цветочек", "Give a flower"),
+
         new("wait", "control", ArgKind.Number, 1, "Подождать {0} сек", "Wait {0} s"),
+        new("repeat", "control", ArgKind.Number, 3, "Повторить {0} раз", "Repeat {0} times"),
+        new("forever", "control", ArgKind.None, 0, "Повторять всегда", "Forever"),
+        new("if", "control", ArgKind.Condition, 0, "Если {0}", "If {0}"),
+        new("end", "control", ArgKind.None, 0, "Конец", "End"),
         new("chance", "control", ArgKind.Number, 50, "Дальше с шансом {0}%", "Go on with {0}% chance"),
     };
 
     public static readonly string[] Categories = { "motion", "behavior", "looks", "sound", "control" };
     public static readonly string[] Emotes = { "heart", "star", "note", "!", "?", "zzz" };
+    public static readonly string[] Conditions = { "zerog", "gravity", "music", "nomusic", "ball", "noball", "night", "day", "away", "here", "sleeping", "awake" };
+
+    public static bool Opens(string id) => id is "repeat" or "forever" or "if";
+
+    public static int MatchEnd(List<ScriptBlock> list, int open)
+    {
+        int depth = 0;
+        for (int i = open + 1; i < list.Count; i++)
+        {
+            if (Opens(list[i].Id)) depth++;
+            else if (list[i].Id == "end") { if (depth == 0) return i; depth--; }
+        }
+        return list.Count;
+    }
+
+    static int MatchOpen(List<ScriptBlock> list, int end)
+    {
+        int depth = 0;
+        for (int i = end - 1; i >= 0; i--)
+        {
+            if (list[i].Id == "end") depth++;
+            else if (Opens(list[i].Id)) { if (depth == 0) return i; depth--; }
+        }
+        return -1;
+    }
+
+    public static int OpenerOf(List<ScriptBlock> list, int end) => MatchOpen(list, end);
 
     public static BlockDef Def(string id) => Events.Concat(Actions).FirstOrDefault(b => b.Id == id);
 
     public static ScriptBlock New(BlockDef d) => new()
     {
         Id = d.Id, Num = d.Default,
-        Str = d.Arg switch { ArgKind.Skin => "mint", ArgKind.Accessory => "crown", ArgKind.Emote => "heart", ArgKind.Time => "23:00", _ => null },
+        Str = d.Arg switch { ArgKind.Skin => "mint", ArgKind.Accessory => "crown", ArgKind.Emote => "heart", ArgKind.Time => "23:00", ArgKind.Condition => "music", _ => null },
     };
 
     public static List<PetScript> Templates() => new()
@@ -111,7 +147,7 @@ static class Blocks
 
 class ScriptRunner
 {
-    class Run { public PetScript Script; public int Pc; public double WaitUntil; }
+    class Run { public PetScript Script; public int Pc; public double WaitUntil; public Dictionary<int, int> Loops = new(); }
 
     readonly List<Run> runs = new();
     readonly Random rnd = new();
@@ -156,7 +192,7 @@ class ScriptRunner
 
     public void Back() => afkFired.Clear();
 
-    public void Tick(double time, Action<ScriptBlock> act)
+    public void Tick(double time, Action<ScriptBlock> act, Func<string, bool> check)
     {
         for (int i = runs.Count - 1; i >= 0; i--)
         {
@@ -165,10 +201,29 @@ class ScriptRunner
             int guard = 0;
             while (r.Pc < list.Count && time >= r.WaitUntil && guard++ < 50)
             {
-                var b = list[r.Pc++];
-                if (b.Id == "wait") r.WaitUntil = time + Math.Max(0, b.Num);
-                else if (b.Id == "chance") { if (rnd.NextDouble() * 100 >= b.Num) r.Pc = list.Count; }
-                else act(b);
+                var b = list[r.Pc];
+                switch (b.Id)
+                {
+                    case "wait": r.WaitUntil = time + Math.Max(0, b.Num); r.Pc++; break;
+                    case "chance": r.Pc = rnd.NextDouble() * 100 >= b.Num ? list.Count : r.Pc + 1; break;
+                    case "repeat":
+                        int times = (int)Math.Round(Math.Max(0, b.Num));
+                        if (times <= 0) r.Pc = Blocks.MatchEnd(list, r.Pc) + 1;
+                        else { r.Loops[r.Pc] = times; r.Pc++; }
+                        break;
+                    case "forever": r.Loops[r.Pc] = int.MaxValue; r.Pc++; break;
+                    case "if": r.Pc = check(b.Str) ? r.Pc + 1 : Blocks.MatchEnd(list, r.Pc) + 1; break;
+                    case "end":
+                        int open = Blocks.OpenerOf(list, r.Pc);
+                        if (open >= 0 && r.Loops.TryGetValue(open, out int left))
+                        {
+                            if (left == int.MaxValue || --left > 0) { if (left != int.MaxValue) r.Loops[open] = left; r.Pc = open + 1; }
+                            else { r.Loops.Remove(open); r.Pc++; }
+                        }
+                        else r.Pc++;
+                        break;
+                    default: act(b); r.Pc++; break;
+                }
             }
             if (r.Pc >= list.Count) runs.RemoveAt(i);
         }
