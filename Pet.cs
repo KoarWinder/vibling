@@ -47,7 +47,7 @@ class PetForm : LayeredForm
     float sqX = 1, sqY = 1, blinkT = 3, pawT, codeT, snoreT, kickCd, dustT, occT, nearT, saveT, lastT;
     float lastInteract, lastKeyT = -999;
     int face = 1, paw;
-    float fFartT, fAngryT;
+    float fFartT, fAngryT, hopK = 1;
     bool farted;
     float aspin, bonkT, fHappyT, fEatT, fDizzyT, hicT, squintT, fxT, faT, faDur, curSpeed;
     FA fa;
@@ -93,6 +93,7 @@ class PetForm : LayeredForm
     {
         Stage = true;
         S = settings;
+        Sprite.Buddy = Array.IndexOf(Sprite.Buddies, S.Buddy) >= 0 ? S.Buddy : "classic";
         using (var g0 = Graphics.FromHwnd(IntPtr.Zero)) U = g0.DpiX / 96f;
         Text = L.T("app");
         ApplySize();
@@ -455,6 +456,7 @@ class PetForm : LayeredForm
 
     void Dust(int n, float dir = 0)
     {
+        if (Sprite.Buddy == "ghost") return;
         for (int i = 0; i < n; i++)
         {
             float side = dir != 0 ? dir : (i % 2 == 0 ? -1 : 1);
@@ -638,7 +640,7 @@ class PetForm : LayeredForm
                 y = cur.Y - grabOff.Y;
                 trail.Enqueue((time, cur));
                 while (trail.Count > 0 && time - trail.Peek().t > 0.08f) trail.Dequeue();
-                if (stT > 0.3f) { angle = MathF.Sin(stT * 12) * 7; tsx = 0.95f; tsy = 1.06f; }
+                if (stT > 0.3f && Sprite.Buddy != "pumpkin") { angle = MathF.Sin(stT * 12) * 7; tsx = 0.95f; tsy = 1.06f; }
                 if ((MouseButtons & MouseButtons.Left) == 0 && mouseDown) OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
                 break;
             }
@@ -1605,6 +1607,11 @@ class PetForm : LayeredForm
                 pose.LookX = 0; pose.LookY = 1;
                 break;
             case St.Sleep: pose.Sit = true; pose.Eyes = Eyes.Closed; break;
+            case St.Drag when Sprite.Buddy == "ghost":
+                pose.Arms = Arms.Out; pose.Eyes = stT < 0.3f ? Eyes.Wide : Eyes.Happy; pose.Mouth = Mouth.Smile;
+                break;
+            case St.Drag when Sprite.Buddy == "pumpkin":
+                break;
             case St.Drag:
                 if (stT < 0.3f) { pose.Legs = Legs.Dangle; pose.Arms = Arms.Side; pose.Eyes = Eyes.Wide; pose.Mouth = Mouth.O; }
                 else { pose.Legs = Legs.Run; pose.Arms = Arms.Struggle; pose.Eyes = Eyes.Squint; pose.Mouth = Mouth.O; }
@@ -1774,16 +1781,29 @@ class PetForm : LayeredForm
             g.SetClip(peekDir < 0 ? new RectangleF(edgeLocal, 0, LW, LH) : new RectangleF(0, 0, edgeLocal, LH));
         }
 
+        bool ghost = Sprite.Buddy == "ghost";
+        float lift = ghost && Grounded && st != St.Peek ? (3 + MathF.Sin(time * 2.4f)) * P : 0;
+        float bsx = 1, bsy = 1;
+        if (Sprite.Buddy == "pumpkin" && st is St.Walk or St.Run)
+        {
+            float k = MathF.Abs(MathF.Sin(stT * (st == St.Run ? 11 : 7)));
+            if (k < 0.15f && hopK >= 0.15f) Dust(3);
+            hopK = k;
+            lift = k * (st == St.Run ? 4 : 6) * P;
+            if (k < 0.25f) { bsx = 1.14f; bsy = 0.86f; }
+            else if (k > 0.8f) { bsx = 0.94f; bsy = 1.08f; }
+        }
         if (Grounded && st != St.Peek)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            using var sh = new SolidBrush(Color.FromArgb(45, 0, 0, 0));
-            g.FillEllipse(sh, FX - 8 * P * sqX, FY - 0.5f * P, 16 * P * sqX, P);
+            using var sh = new SolidBrush(Color.FromArgb(ghost ? 28 : 45, 0, 0, 0));
+            float sw = lift > 0 ? 14 - lift / P : 16;
+            g.FillEllipse(sh, FX - sw / 2 * P * sqX, FY - 0.5f * P, sw * P * sqX, P);
             g.SmoothingMode = SmoothingMode.None;
         }
 
         BuildPose();
-        Sprite.Draw(g, pose, skin, S.Wear, FX, FY + hop + (st == St.Peek ? sink * P : 0), P, face, sqX, sqY, angle);
+        Sprite.Draw(g, pose, skin, S.Wear, FX, FY + hop - lift + (st == St.Peek ? sink * P : 0), P, face, sqX * bsx, sqY * bsy, angle);
         g.ResetClip();
 
         if (st == St.Dizzy || st == St.Splat)

@@ -10,6 +10,7 @@ static class Program
 {
     const string MutexName = "Vibling.SingleInstance";
     const string OpenSettingsEvent = "Vibling.OpenSettings";
+    const string QuitEvent = "Vibling.Quit";
     static EventWaitHandle openSettings;
 
     [STAThread]
@@ -19,12 +20,15 @@ static class Program
         bool first;
         try { first = mutex.WaitOne(args.Contains("--updated") ? 15000 : 0); }
         catch (AbandonedMutexException) { first = true; }
+        bool quit = args.Contains("--quit");
         if (!first)
         {
-            try { using var ev = EventWaitHandle.OpenExisting(OpenSettingsEvent); ev.Set(); } catch { }
+            try { using var ev = EventWaitHandle.OpenExisting(quit ? QuitEvent : OpenSettingsEvent); ev.Set(); } catch { }
             return;
         }
+        if (quit) return;
         openSettings = new EventWaitHandle(false, EventResetMode.AutoReset, OpenSettingsEvent);
+        var quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEvent);
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
@@ -43,6 +47,12 @@ static class Program
             {
                 try { pet.BeginInvoke(pet.ShowSettings); } catch { break; }
             }
+        }) { IsBackground = true }.Start();
+
+        new Thread(() =>
+        {
+            if (quitSignal.WaitOne())
+                try { pet.BeginInvoke(pet.Quit); } catch { }
         }) { IsBackground = true }.Start();
 
         if (args.Contains("--settings") || !settings.FirstRunDone)
@@ -241,6 +251,7 @@ static class Desk
 class Settings
 {
     public string Skin { get; set; } = "classic";
+    public string Buddy { get; set; } = "classic";
     public List<string> Wear { get; set; } = new();
     public string CustomBody { get; set; } = "#D97757";
     public string CustomEye { get; set; } = "#181216";

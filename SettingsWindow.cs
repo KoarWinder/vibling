@@ -322,6 +322,7 @@ class SettingsWindow : UI.FluentWindow
         }
         page.Content = stack;
         scroll.ScrollToTop();
+        Dispatcher.BeginInvoke(() => scroll.ScrollToTop(), WT.DispatcherPriority.Loaded);
     }
 
     WC.Border Card(string title, params W.UIElement[] rows)
@@ -396,7 +397,7 @@ class SettingsWindow : UI.FluentWindow
             if (blink < -0.12f) blink = 2 + (float)rnd.NextDouble() * 3;
             if (wave < -1.5f) { wave = 5 + (float)rnd.NextDouble() * 4; face = rnd.Next(2) == 0 ? 1 : -1; }
             int w = Math.Max(1, (int)previewBox.ActualWidth), h = 220;
-            float P = Math.Min(9f, S.Pixel * 1.5f);
+            float P = Math.Min(Sprite.Buddy == "classic" ? 9f : 6f, S.Pixel * 1.5f);
             pose.Reset(t);
             var c = previewBox.PointFromScreen(new W.Point(System.Windows.Forms.Cursor.Position.X, System.Windows.Forms.Cursor.Position.Y));
             pose.LookX = (c.X > w * 0.62 ? 1 : c.X < w * 0.38 ? -1 : 0) * face;
@@ -414,7 +415,8 @@ class SettingsWindow : UI.FluentWindow
                 using (var sh = new SD.SolidBrush(SD.Color.FromArgb(70, 0, 0, 0)))
                     g.FillEllipse(sh, w / 2f - 8 * P, h - 30 - 0.5f * P, 16 * P, P);
                 g.SmoothingMode = SD.Drawing2D.SmoothingMode.None;
-                Sprite.Draw(g, pose, Skin, S.Wear, w / 2f, h - 30 + hop, P, face, 1, sq);
+                float lift = Sprite.Buddy == "ghost" ? (3 + (float)Math.Sin(t * 2.4)) * P : 0;
+                Sprite.Draw(g, pose, Skin, S.Wear, w / 2f, h - 30 + hop - lift, P, face, 1, sq);
             });
         };
         anim.Start();
@@ -441,12 +443,21 @@ class SettingsWindow : UI.FluentWindow
             return tile;
         }
 
+        var buddyTiles = new List<(WC.Border tile, string id, WC.Image img)>();
+        W.UIElement skinCard = null;
         var skinTiles = new List<(WC.Border tile, Skin skin, WC.Image img)>();
         WC.Border customTile = null;
         W.UIElement customCard = null;
         var accTiles = new List<(WC.Border tile, string id, WC.Image img)>();
         void Refresh()
         {
+            foreach (var (tile, id, img) in buddyTiles)
+            {
+                tile.BorderBrush = id == Sprite.Buddy ? AccentB : WM.Brushes.Transparent;
+                var bp = new Pose(); bp.Reset(0); bp.Buddy = id;
+                img.Source = Fluent.Pet(Skin, S.Wear, 64, 60, 3f, bp);
+            }
+            if (skinCard != null) skinCard.Visibility = Sprite.OwnColors(Sprite.Buddy) ? W.Visibility.Collapsed : W.Visibility.Visible;
             foreach (var (tile, skin, img) in skinTiles)
             {
                 tile.BorderBrush = skin.Id == S.Skin ? AccentB : WM.Brushes.Transparent;
@@ -460,8 +471,25 @@ class SettingsWindow : UI.FluentWindow
             logo.Source = Fluent.Pet(Skin, S.Wear, 44, 44, 2.2f);
             foreach (var (_, bar) in nav) bar.Background = AccentB;
             if (customTile != null) customTile.BorderBrush = S.Skin == "custom" ? AccentB : WM.Brushes.Transparent;
-            if (customCard != null) customCard.Visibility = S.Skin == "custom" ? W.Visibility.Visible : W.Visibility.Collapsed;
+            if (customCard != null) customCard.Visibility = S.Skin == "custom" && !Sprite.OwnColors(Sprite.Buddy) ? W.Visibility.Visible : W.Visibility.Collapsed;
         }
+
+        var buddies = new WC.WrapPanel();
+        foreach (var id in Sprite.Buddies)
+        {
+            var img = new WC.Image { Width = 64, Height = 60 };
+            string bid = id;
+            var tile = Tile(img, L.T("buddy." + id), () =>
+            {
+                S.Buddy = bid;
+                Sprite.Buddy = bid;
+                S.Save();
+                Refresh();
+            });
+            buddyTiles.Add((tile, id, img));
+            buddies.Children.Add(tile);
+        }
+        left.Children.Insert(1, Card(L.T("card.buddy"), buddies));
 
         var skins = new WC.WrapPanel();
         foreach (var skin in Looks.Skins)
@@ -489,10 +517,11 @@ class SettingsWindow : UI.FluentWindow
             Refresh();
         });
         skins.Children.Add(customTile);
-        right.Children.Add(Card(L.T("card.skin"), skins));
+        skinCard = Card(L.T("card.skin"), skins);
+        right.Children.Add(skinCard);
 
         customCard = CustomColorCard(() => { Fluent.Accent(Skin.Accent); Refresh(); });
-        left.Children.Insert(1, customCard);
+        left.Children.Insert(2, customCard);
 
         var accs = new WC.WrapPanel();
         foreach (var a in Looks.Accessories.Where(a => a.Id != "none"))

@@ -4,7 +4,7 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 
 [Русская версия ниже](#vibling-по-русски)
 
-![Vibling settings](docs/vibling-settings-en.png)
+![Vibling settings](docs/buddies-en.png)
 
 ## Features
 
@@ -12,6 +12,7 @@ A tiny pixel pet for your Windows desktop. It walks along the taskbar, climbs on
 - Can be grabbed and thrown: bounces off screen edges, lands in different ways, sometimes opens an umbrella.
 - Taps a laptop while you type. Key presses are only counted, never recorded.
 - Chases a ball you can throw around.
+- 3 buddies: Clawd, a floating ghost and a hopping pumpkin.
 - 9 skins plus your own colors for body, eyes and outline.
 - 17 accessories, wear as many as you like at once.
 - Hides behind windows and the screen edge, peeks out and waves.
@@ -54,7 +55,7 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 Маленький пиксельный питомец для рабочего стола Windows. Гуляет по панели задач, забирается на окна, играет в мячик, садится за ноутбук, пока вы печатаете, и засыпает от скуки.
 
-![Настройки Vibling](docs/vibling-settings-ru.png)
+![Настройки Vibling](docs/buddies-ru.png)
 
 ## Возможности
 
@@ -62,6 +63,7 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 - Его можно схватить и бросить: отскакивает от краёв экрана, приземляется по-разному, иногда раскрывает зонтик.
 - Стучит по ноутбуку, пока вы печатаете. Нажатия только считаются, сами клавиши не сохраняются.
 - Бегает за мячиком.
+- 3 персонажа: Clawd, летающее привидение и прыгучая тыковка.
 - 9 скинов и свой цвет: тело, глаза и обводка.
 - 17 аксессуаров, можно надевать сколько угодно сразу.
 - Прячется за окнами и краем экрана, выглядывает и машет.

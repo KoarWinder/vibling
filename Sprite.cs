@@ -65,6 +65,7 @@ enum Mouth { None, Smile, O, Open, Chew, Yawn, Frown }
 class Pose
 {
     public bool Sit, Laptop, LaptopLit, Blush, Umbrella, Flower;
+    public string Buddy;
     public Legs Legs;
     public Arms Arms;
     public Eyes Eyes;
@@ -82,6 +83,10 @@ class Pose
 
 static class Sprite
 {
+    public static string Buddy = "classic";
+    public static readonly string[] Buddies = { "classic", "ghost", "pumpkin" };
+    public static bool OwnColors(string b) => b is "ghost" or "pumpkin";
+
     const int OX = 4, OY = 10, GW = 30, GH = 30;
     static readonly Color?[,] grid = new Color?[GW, GH];
     static readonly Dictionary<Color, SolidBrush> brushes = new();
@@ -107,8 +112,39 @@ static class Sprite
     static readonly Color UmbA = Color.FromArgb(232, 72, 85);
     static readonly Color UmbB = Color.FromArgb(255, 245, 235);
 
+    static bool shiftOn;
+    static int dxL, dxR, sdy;
+    static readonly Color GhostC = Color.FromArgb(246, 246, 255), GhostShade = Color.FromArgb(206, 206, 238);
+    static readonly Color PumpC = Color.FromArgb(240, 136, 40), PumpShade = Color.FromArgb(198, 96, 24), PumpLight = Color.FromArgb(255, 178, 84), PumpGroove = Color.FromArgb(176, 80, 20);
+    static readonly Color Stem = Color.FromArgb(106, 72, 38), StemDark = Color.FromArgb(78, 52, 28), Leaf = Color.FromArgb(86, 176, 84);
+
+    static readonly string[] PumpkinMap =
+    {
+        ".....KT.GG..",
+        ".....TTGG...",
+        "..BBBDDBBB..",
+        "LRBBBBBBBBRS",
+        "LRBBBBBBBBRS",
+        "BRBBBBBBBBRS",
+        "BRBBBBBBBBRS",
+        "BRBBBBBBBBRS",
+        ".BRBBBBBBRS.",
+        "...DDDDDD...",
+    };
+
+    static void Paint(string[] map, int x0, int y0, Func<char, Color?> pal)
+    {
+        for (int r = 0; r < map.Length; r++)
+            for (int c = 0; c < map[r].Length; c++)
+            {
+                var col = pal(map[r][c]);
+                if (col != null) Cell(x0 + c, y0 + r, col.Value);
+            }
+    }
+
     static void Cell(int c, int r, Color col)
     {
+        if (shiftOn) { c += c < 9 ? dxL : dxR; r += sdy; }
         int ci = c + OX, ri = r + OY;
         if (ci >= 0 && ci < GW && ri >= 0 && ri < GH) grid[ci, ri] = col;
     }
@@ -125,14 +161,48 @@ static class Sprite
         int by = p.Sit ? 1 : 0;
         int ph2(float speed) => (int)(p.Phase * speed) % 2;
 
-        Rect(3, 3 + by, 14, 9 + by, s.Body);
-        Rect(3, 9 + by, 14, 9 + by, s.Shade);
-
-        if (!p.Sit && p.Legs == Legs.Skid)
+        string b = p.Buddy ?? Buddy;
+        if (Array.IndexOf(Buddies, b) < 0) b = "classic";
+        Color body = b switch { "ghost" => GhostC, "pumpkin" => PumpC, _ => s.Body };
+        Color shade = b switch { "ghost" => GhostShade, "pumpkin" => PumpShade, _ => s.Shade };
+        int eyeDy = 0, mouthDy = 0, accDy = 0, neckDy = 0, armDx = 0, armDy = 0;
+        bool hatOn = wear.Any(a => a is not ("none" or "shades" or "bowtie" or "scarf" or "bell") && Looks.Accessories.Any(x => x.Id == a));
+        switch (b)
         {
-            Rect(4, 10, 4, 11, s.Shade); Rect(6, 10, 6, 11, s.Shade);
-            Cell(12, 10, s.Shade); Cell(13, 11, s.Shade);
-            Cell(14, 10, s.Shade); Cell(15, 11, s.Shade);
+            case "ghost":
+            {
+                Rect(6, 2 + by, 11, 2 + by, body);
+                Rect(4, 3 + by, 13, 3 + by, body);
+                Rect(3, 4 + by, 14, 10 + by, body);
+                Rect(14, 5 + by, 14, 10 + by, shade);
+                Cell(5, 3 + by, White);
+                int o = ph2(3);
+                for (int c = 3; c <= 14; c++)
+                    if ((c - 3 + o * 2) % 4 != 3) Cell(c, 11 + by, c >= 13 ? shade : body);
+                eyeDy = 0; mouthDy = 0; accDy = 1; neckDy = 1;
+                break;
+            }
+            case "pumpkin":
+                Paint(PumpkinMap, 3, 2 + by, ch => ch switch
+                {
+                    'T' or 'K' or 'G' when hatOn => null,
+                    'B' => body, 'S' => shade, 'L' => PumpLight, 'R' => PumpGroove, 'D' => PumpGroove,
+                    'T' => Stem, 'K' => StemDark, 'G' => Leaf, _ => null,
+                });
+                eyeDy = 1; mouthDy = 1; accDy = 2; neckDy = 1;
+                break;
+            default:
+                Rect(3, 3 + by, 14, 9 + by, body);
+                Rect(3, 9 + by, 14, 9 + by, shade);
+                break;
+        }
+
+        if (b != "classic") { }
+        else if (!p.Sit && p.Legs == Legs.Skid)
+        {
+            Rect(4, 10, 4, 11, shade); Rect(6, 10, 6, 11, shade);
+            Cell(12, 10, shade); Cell(13, 11, shade);
+            Cell(14, 10, shade); Cell(15, 11, shade);
         }
         else if (!p.Sit && p.Legs != Legs.Hidden)
         {
@@ -153,99 +223,116 @@ static class Sprite
                         break;
                     case Legs.Tuck: len = 1; break;
                 }
-                Rect(cols[i], 10, cols[i], 9 + len, s.Shade);
+                Rect(cols[i], 10, cols[i], 9 + len, shade);
             }
         }
 
+        shiftOn = true; dxL = armDx; dxR = -armDx; sdy = armDy;
         switch (p.Arms)
         {
             case Arms.Typing:
             {
                 int l = p.Paw == 0 ? 9 : 10, r = p.Paw == 1 ? 9 : 10;
-                Rect(1, l, 2, l, s.Body); Rect(15, r, 16, r, s.Body);
+                Rect(1, l, 2, l, body); Rect(15, r, 16, r, body);
                 break;
             }
             case Arms.Up:
-                ArmUp(s.Body, by, 0);
+                ArmUp(body, by, 0);
                 break;
             case Arms.Flail:
-                ArmUp(s.Body, by, ph2(5));
+                ArmUp(body, by, ph2(5));
                 break;
             case Arms.Wave:
             {
-                Rect(1, 6 + by, 2, 7 + by, s.Body);
+                Rect(1, 6 + by, 2, 7 + by, body);
                 int f = ph2(6);
-                Rect(15, 2 + f + by, 16, 3 + f + by, s.Body);
+                Rect(15, 2 + f + by, 16, 3 + f + by, body);
                 break;
             }
             case Arms.Out:
             {
                 int f = ph2(5);
-                Rect(0, 5 + f + by, 2, 5 + f + by, s.Body); Rect(15, 6 - f + by, 17, 6 - f + by, s.Body);
+                Rect(0, 5 + f + by, 2, 5 + f + by, body); Rect(15, 6 - f + by, 17, 6 - f + by, body);
                 break;
             }
             case Arms.Umbrella:
-                Rect(1, 6 + by, 2, 7 + by, s.Body); Rect(15, 2, 16, 4, s.Body);
+                Rect(1, 6 + by, 2, 7 + by, body); Rect(15, 2, 16, 4, body);
                 break;
             case Arms.Struggle:
             {
                 int f = ph2(7);
-                Rect(1, 6 + by, 2, 7 + by, s.Body); Rect(f, 8 + by, f + 1, 9 + by, s.Body);
-                Rect(15, 6 + by, 16, 7 + by, s.Body); Rect(16 - f, 8 + by, 17 - f, 9 + by, s.Body);
+                Rect(1, 6 + by, 2, 7 + by, body); Rect(f, 8 + by, f + 1, 9 + by, body);
+                Rect(15, 6 + by, 16, 7 + by, body); Rect(16 - f, 8 + by, 17 - f, 9 + by, body);
                 break;
             }
             case Arms.Swing:
             {
                 int d = ph2(9);
-                Rect(1, 6 + by + d, 2, 7 + by + d, s.Body); Rect(15, 7 + by - d, 16, 8 + by - d, s.Body);
+                Rect(1, 6 + by + d, 2, 7 + by + d, body); Rect(15, 7 + by - d, 16, 8 + by - d, body);
                 break;
             }
             default:
-                Rect(1, 6 + by, 2, 7 + by, s.Body); Rect(15, 6 + by, 16, 7 + by, s.Body);
+                Rect(1, 6 + by, 2, 7 + by, body); Rect(15, 6 + by, 16, 7 + by, body);
                 break;
         }
+        shiftOn = false;
 
-        int lc = p.LookX, e0 = 5 + by + p.LookY;
+        int eb = by + eyeDy;
+        Color ec = Sprite.OwnColors(b) ? Dark : s.Eye;
+        int lookY = b switch { "ghost" => Math.Min(0, p.LookY), "pumpkin" => 0, _ => p.LookY };
+        bool dotEyes = p.Eyes is Eyes.Open or Eyes.Blink or Eyes.Wide or Eyes.Closed or Eyes.Squint;
+        int lc = b == "pumpkin" && !dotEyes ? 0 : p.LookX, e0 = 5 + eb + lookY;
+        if (b == "pumpkin" && dotEyes) { shiftOn = true; dxL = 1; dxR = -1; sdy = 0; }
         switch (p.Eyes)
         {
             case Eyes.Open:
-                Rect(6 + lc, e0, 6 + lc, e0 + 1, s.Eye); Rect(11 + lc, e0, 11 + lc, e0 + 1, s.Eye);
+                Rect(6 + lc, e0, 6 + lc, e0 + 1, ec); Rect(11 + lc, e0, 11 + lc, e0 + 1, ec);
                 break;
             case Eyes.Blink:
-                Cell(6 + lc, e0 + 1, s.Eye); Cell(11 + lc, e0 + 1, s.Eye);
+                Cell(6 + lc, e0 + 1, ec); Cell(11 + lc, e0 + 1, ec);
                 break;
             case Eyes.Happy:
-                Cell(5, 6 + by, s.Eye); Cell(6, 5 + by, s.Eye); Cell(7, 6 + by, s.Eye);
-                Cell(10, 6 + by, s.Eye); Cell(11, 5 + by, s.Eye); Cell(12, 6 + by, s.Eye);
+                Cell(5, 6 + eb, ec); Cell(6, 5 + eb, ec); Cell(7, 6 + eb, ec);
+                Cell(10, 6 + eb, ec); Cell(11, 5 + eb, ec); Cell(12, 6 + eb, ec);
                 break;
             case Eyes.Closed:
-                Rect(5, 6 + by, 6, 6 + by, s.Eye); Rect(11, 6 + by, 12, 6 + by, s.Eye);
+                Rect(5, 6 + eb, 6, 6 + eb, ec); Rect(11, 6 + eb, 12, 6 + eb, ec);
                 break;
             case Eyes.Wide:
-                Rect(6 + lc, 4 + by, 6 + lc, 5 + by, s.Eye); Rect(11 + lc, 4 + by, 11 + lc, 5 + by, s.Eye);
+                Rect(6 + lc, 4 + eb, 6 + lc, 5 + eb, ec); Rect(11 + lc, 4 + eb, 11 + lc, 5 + eb, ec);
                 break;
             case Eyes.Squint:
-                Cell(5, 4 + by, s.Eye); Cell(6, 5 + by, s.Eye); Cell(5, 6 + by, s.Eye);
-                Cell(12, 4 + by, s.Eye); Cell(11, 5 + by, s.Eye); Cell(12, 6 + by, s.Eye);
+                Cell(5, 4 + eb, ec); Cell(6, 5 + eb, ec); Cell(5, 6 + eb, ec);
+                Cell(12, 4 + eb, ec); Cell(11, 5 + eb, ec); Cell(12, 6 + eb, ec);
                 break;
             case Eyes.Angry:
-                Cell(5, 3 + by, s.Eye); Cell(6, 4 + by, s.Eye); Cell(12, 3 + by, s.Eye); Cell(11, 4 + by, s.Eye);
-                Rect(6 + lc, 5 + by, 6 + lc, 6 + by, s.Eye); Rect(11 + lc, 5 + by, 11 + lc, 6 + by, s.Eye);
+                Cell(5, 3 + eb, ec); Cell(6, 4 + eb, ec); Cell(12, 3 + eb, ec); Cell(11, 4 + eb, ec);
+                Rect(6 + lc, 5 + eb, 6 + lc, 6 + eb, ec); Rect(11 + lc, 5 + eb, 11 + lc, 6 + eb, ec);
                 break;
         }
 
+        shiftOn = false;
         Color m = s.Outline;
+        int mb = by + mouthDy;
         switch (p.Mouth)
         {
-            case Mouth.O: Rect(8, 8 + by, 9, 8 + by, m); break;
-            case Mouth.Open: Rect(8, 8 + by, 9, 8 + by, m); break;
-            case Mouth.Chew: if (ph2(8) == 0) Rect(8, 7 + by, 9, 8 + by, m); else Rect(8, 8 + by, 9, 8 + by, m); break;
-            case Mouth.Yawn: Rect(7, 7 + by, 10, 8 + by, m); break;
-            case Mouth.Frown: Rect(8, 7 + by, 9, 7 + by, m); Cell(7, 8 + by, m); Cell(10, 8 + by, m); break;
+            case Mouth.O: Rect(8, 8 + mb, 9, 8 + mb, m); break;
+            case Mouth.Open: Rect(8, 8 + mb, 9, 8 + mb, m); break;
+            case Mouth.Chew: if (ph2(8) == 0) Rect(8, 7 + mb, 9, 8 + mb, m); else Rect(8, 8 + mb, 9, 8 + mb, m); break;
+            case Mouth.Yawn: Rect(7, 7 + mb, 10, 8 + mb, m); break;
+            case Mouth.Frown: Rect(8, 7 + mb, 9, 7 + mb, m); Cell(7, 8 + mb, m); Cell(10, 8 + mb, m); break;
+            case Mouth.Smile when b == "pumpkin": Cell(7, 8 + mb, m); Rect(8, 9 + mb, 9, 9 + mb, m); Cell(10, 8 + mb, m); break;
         }
-        if (p.Blush) { Cell(4, 7 + by, BlushC); Cell(13, 7 + by, BlushC); }
+        shiftOn = false;
+        if (p.Blush)
+        {
+            Cell(4, 7 + eb, BlushC); Cell(13, 7 + eb, BlushC);
+        }
 
+        int by0 = by;
         foreach (var acc in Looks.Ordered(wear))
+        {
+        by = by0 + acc switch { "shades" => eyeDy, "bowtie" or "scarf" or "bell" => neckDy, _ => accDy };
         switch (acc)
         {
             case "headphones":
@@ -336,12 +423,18 @@ static class Sprite
                 break;
         }
 
+        }
+        shiftOn = false;
+        by = by0;
         if (p.Flower)
         {
-            Rect(15, 6 + by, 17, 7 + by, s.Body);
+            shiftOn = true;
+            dxL = armDx; dxR = -armDx; sdy = armDy;
+            Rect(15, 6 + by, 17, 7 + by, body);
             Rect(18, 3 + by, 18, 6 + by, Green); Cell(19, 4 + by, Green);
             Rect(17, -1 + by, 19, 1 + by, Pink); Cell(16, 0 + by, Pink); Cell(20, 0 + by, Pink); Cell(18, -2 + by, Pink); Cell(18, 2 + by, Pink);
             Cell(18, 0 + by, Gold);
+            shiftOn = false;
         }
         if (p.Laptop)
         {
